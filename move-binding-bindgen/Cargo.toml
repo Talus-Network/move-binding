@@ -1,0 +1,10 @@
+[package]
+name = "move-binding-bindgen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+move-binding-core = { path = "../move-binding-core" }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
