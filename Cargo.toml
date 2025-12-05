@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+    "move-binding-core",
+    "move-binding-env",
+    "move-binding-bindgen",
+]
+
+[workspace.dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", features = ["serde"] }
+sui-rpc = { git = "https://github.com/mystenlabs/sui-rust-sdk" }
+sui-transaction-builder = { git = "https://github.com/mystenlabs/sui-rust-sdk" }

@@ -1,0 +1,11 @@
+[package]
+name = "move-binding-env"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+move-binding-core = { path = "../move-binding-core" }
+sui-rpc = { workspace = true }
+sui-transaction-builder = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
