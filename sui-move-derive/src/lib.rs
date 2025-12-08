@@ -138,26 +138,6 @@ impl Parse for MoveStructArgs {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_args() {
-        let args: MoveStructArgs = syn::parse_quote!(
-            address = "0x1",
-            module = "vault",
-            abilities = "key, store",
-            phantoms = "T"
-        );
-        assert_eq!(args.address.as_deref(), Some("0x1"));
-        assert_eq!(args.module.as_deref(), Some("vault"));
-        assert_eq!(args.name, None);
-        assert_eq!(args.abilities, vec!["key".to_string(), "store".to_string()]);
-        assert_eq!(args.phantoms, vec!["T".to_string()]);
-    }
-}
-
 fn expand_move_struct(args: MoveStructArgs, input: DeriveInput) -> syn::Result<TokenStream> {
     let span = input.span();
     let struct_ident = input.ident.clone();
@@ -177,26 +157,28 @@ fn expand_move_struct(args: MoveStructArgs, input: DeriveInput) -> syn::Result<T
     let mut fields = match data.fields {
         Fields::Named(named) => named.named.into_iter().collect::<Vec<_>>(),
         _ => {
-            return Err(syn::Error::new(span, "#[move_struct] currently supports only structs with named fields"))
+            return Err(syn::Error::new(
+                span,
+                "#[move_struct] currently supports only structs with named fields",
+            ))
         }
     };
 
     // Inject PhantomData fields for phantom params
-    let phantom_param_names: Vec<String> = args
-        .phantoms
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let phantom_param_names: Vec<String> = args.phantoms.iter().map(|s| s.to_string()).collect();
 
-    let phantom_params: Vec<&TypeParam> = generics.params.iter().filter_map(|param| match param {
-        GenericParam::Type(ty) => Some(ty),
-        _ => None,
-    })
-    .filter(|ty| {
-        let name = ty.ident.to_string();
-        has_phantom_attr(&ty.attrs) || phantom_param_names.iter().any(|p| p == &name)
-    })
-    .collect();
+    let phantom_params: Vec<&TypeParam> = generics
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            GenericParam::Type(ty) => Some(ty),
+            _ => None,
+        })
+        .filter(|ty| {
+            let name = ty.ident.to_string();
+            has_phantom_attr(&ty.attrs) || phantom_param_names.iter().any(|p| p == &name)
+        })
+        .collect();
 
     for ty in &phantom_params {
         let ident = &ty.ident;
@@ -352,4 +334,24 @@ fn expand_move_struct(args: MoveStructArgs, input: DeriveInput) -> syn::Result<T
     };
 
     Ok(expanded.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_args() {
+        let args: MoveStructArgs = syn::parse_quote!(
+            address = "0x1",
+            module = "vault",
+            abilities = "key, store",
+            phantoms = "T"
+        );
+        assert_eq!(args.address.as_deref(), Some("0x1"));
+        assert_eq!(args.module.as_deref(), Some("vault"));
+        assert_eq!(args.name, None);
+        assert_eq!(args.abilities, vec!["key".to_string(), "store".to_string()]);
+        assert_eq!(args.phantoms, vec!["T".to_string()]);
+    }
 }
