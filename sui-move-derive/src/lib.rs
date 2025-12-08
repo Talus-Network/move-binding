@@ -1,5 +1,6 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::{BTreeMap, BTreeSet};
 use syn::parse::{Parse, ParseStream, Parser};
 use syn::parse_quote;
 use syn::spanned::Spanned;
@@ -31,6 +32,69 @@ fn has_phantom_attr(attrs: &[Attribute]) -> bool {
     })
 }
 
+#[derive(Clone, Copy)]
+enum Ability {
+    Key,
+    Store,
+    Copy,
+    Drop,
+}
+
+#[derive(Default, Clone, Copy)]
+struct AbilityFlags {
+    key: bool,
+    store: bool,
+    copy: bool,
+    drop: bool,
+}
+
+impl AbilityFlags {
+    fn from_list(list: &[String], span: proc_macro2::Span) -> syn::Result<Self> {
+        let mut flags = AbilityFlags::default();
+        let mut seen = BTreeSet::new();
+        for item in list {
+            let ident = item.to_lowercase();
+            if !seen.insert(ident.clone()) {
+                continue;
+            }
+            let ability = match ident.as_str() {
+                "key" => Ability::Key,
+                "store" => Ability::Store,
+                "copy" => Ability::Copy,
+                "drop" => Ability::Drop,
+                _ => {
+                    return Err(syn::Error::new(
+                        span,
+                        format!(
+                            "unknown ability `{ident}`; expected one of key, store, copy, drop"
+                        ),
+                    ))
+                }
+            };
+            match ability {
+                Ability::Key => flags.key = true,
+                Ability::Store => flags.store = true,
+                Ability::Copy => flags.copy = true,
+                Ability::Drop => flags.drop = true,
+            }
+        }
+
+        if flags.copy {
+            flags.drop = true;
+        }
+        if flags.key && !flags.store {
+            return Err(syn::Error::new(span, "ability `key` requires `store`"));
+        }
+        if flags.key && flags.copy {
+            return Err(syn::Error::new(
+                span,
+                "a struct cannot have both `key` and `copy` abilities",
+            ));
+        }
+        Ok(flags)
+    }
+}
+
 #[proc_macro_attribute]
 pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
     input
@@ -59,6 +123,8 @@ struct MoveStructArgs {
     name: Option<String>,
     abilities: Vec<String>,
     phantoms: Vec<String>,
+    type_abilities: BTreeMap<String, Vec<String>>,
+    uid_type: Option<syn::Type>,
 }
 
 impl Parse for MoveStructArgs {
@@ -123,6 +189,32 @@ impl Parse for MoveStructArgs {
                         ));
                     }
                 }
+                "type_abilities" => {
+                    if let Lit::Str(ref s) = lit {
+                        args.type_abilities = parse_type_abilities(&s.value(), lit.span())?;
+                    } else {
+                        return Err(syn::Error::new(
+                            lit.span(),
+                            "type_abilities must be a string literal, e.g., \"T: store, copy; U: drop\"",
+                        ));
+                    }
+                }
+                "uid_type" => {
+                    if let Lit::Str(ref s) = lit {
+                        let ty: syn::Type = syn::parse_str(&s.value()).map_err(|_| {
+                            syn::Error::new(
+                                s.span(),
+                                "uid_type must be a valid Rust type path, e.g., \"sui_move::types::UID\"",
+                            )
+                        })?;
+                        args.uid_type = Some(ty);
+                    } else {
+                        return Err(syn::Error::new(
+                            lit.span(),
+                            "uid_type must be a string literal path",
+                        ));
+                    }
+                }
                 other => {
                     return Err(syn::Error::new(
                         meta.path.span(),
@@ -136,6 +228,66 @@ impl Parse for MoveStructArgs {
         parser.parse2(tokens)?;
         Ok(args)
     }
+}
+
+fn parse_type_abilities(
+    raw: &str,
+    span: proc_macro2::Span,
+) -> syn::Result<BTreeMap<String, Vec<String>>> {
+    let mut map = BTreeMap::new();
+    for entry in raw.split(';') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let mut parts = entry.splitn(2, ':');
+        let name = parts
+            .next()
+            .ok_or_else(|| syn::Error::new(span, "expected type parameter name"))?
+            .trim();
+        let abilities = parts
+            .next()
+            .ok_or_else(|| syn::Error::new(span, "expected `:` followed by abilities"))?
+            .trim();
+        if name.is_empty() {
+            return Err(syn::Error::new(span, "missing type parameter name"));
+        }
+        if abilities.is_empty() {
+            return Err(syn::Error::new(
+                span,
+                "missing abilities after `:` in type_abilities",
+            ));
+        }
+        let ability_list = abilities
+            .split(',')
+            .map(|a| a.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+        map.insert(name.to_string(), ability_list);
+    }
+    Ok(map)
+}
+
+fn parse_inline_abilities(param: &TypeParam) -> syn::Result<Option<AbilityFlags>> {
+    let mut flags = AbilityFlags::default();
+    for bound in &param.bounds {
+        if let syn::TypeParamBound::Trait(trait_bound) = bound {
+            if let Some(seg) = trait_bound.path.segments.last() {
+                let name = seg.ident.to_string().to_lowercase();
+                match name.as_str() {
+                    "hascopy" | "copyable" => flags.copy = true,
+                    "hasdrop" | "droppable" => flags.drop = true,
+                    "hasstore" | "storable" => flags.store = true,
+                    "haskey" => flags.key = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+    if flags.copy {
+        flags.drop = true;
+    }
+    Ok((flags.key || flags.store || flags.copy || flags.drop).then_some(flags))
 }
 
 fn expand_move_struct(args: MoveStructArgs, input: DeriveInput) -> syn::Result<TokenStream> {
@@ -152,6 +304,11 @@ fn expand_move_struct(args: MoveStructArgs, input: DeriveInput) -> syn::Result<T
                 "#[move_struct] only supports structs",
             ))
         }
+    };
+
+    let original_fields = match &data.fields {
+        Fields::Named(named) => named.named.clone().into_iter().collect::<Vec<_>>(),
+        _ => unreachable!(),
     };
 
     let mut fields = match data.fields {
@@ -180,6 +337,32 @@ fn expand_move_struct(args: MoveStructArgs, input: DeriveInput) -> syn::Result<T
         })
         .collect();
 
+    let mut type_ability_flags: BTreeMap<String, AbilityFlags> = args
+        .type_abilities
+        .iter()
+        .map(|(name, abilities)| {
+            AbilityFlags::from_list(abilities, span).map(|flags| (name.clone(), flags))
+        })
+        .collect::<syn::Result<_>>()?;
+
+    // Merge inline generic ability annotations (#[abilities(copy, store)] T).
+    for param in generics.params.iter().filter_map(|p| match p {
+        GenericParam::Type(t) => Some(t),
+        _ => None,
+    }) {
+        if let Some(flags) = parse_inline_abilities(param)? {
+            type_ability_flags
+                .entry(param.ident.to_string())
+                .and_modify(|f| {
+                    f.key |= flags.key;
+                    f.store |= flags.store;
+                    f.copy |= flags.copy;
+                    f.drop |= flags.drop;
+                })
+                .or_insert(flags);
+        }
+    }
+
     for ty in &phantom_params {
         let ident = &ty.ident;
         let field_ident = format_ident!("phantom_{}", ident.to_string().to_lowercase());
@@ -193,16 +376,11 @@ fn expand_move_struct(args: MoveStructArgs, input: DeriveInput) -> syn::Result<T
         });
     }
 
-    let abilities = args
-        .abilities
-        .iter()
-        .map(|a| a.to_lowercase())
-        .collect::<Vec<_>>();
-
-    let has_key = abilities.iter().any(|a| a == "key");
-    let has_store = abilities.iter().any(|a| a == "store");
-    let has_copy = abilities.iter().any(|a| a == "copy");
-    let has_drop = abilities.iter().any(|a| a == "drop");
+    let abilities = AbilityFlags::from_list(&args.abilities, span)?;
+    let has_key = abilities.key;
+    let has_store = abilities.store;
+    let has_copy = abilities.copy;
+    let has_drop = abilities.drop;
 
     let type_param_idents: Vec<&TypeParam> = generics
         .params
@@ -213,13 +391,67 @@ fn expand_move_struct(args: MoveStructArgs, input: DeriveInput) -> syn::Result<T
         })
         .collect();
 
-    let where_bounds: Vec<syn::WherePredicate> = type_param_idents
-        .iter()
-        .map(|p| {
-            let ident = &p.ident;
-            syn::parse_quote!(#ident: ::sui_move::MoveType)
-        })
-        .collect();
+    for name in type_ability_flags.keys() {
+        let target_ident = syn::Ident::new(name, span);
+        let exists = type_param_idents
+            .iter()
+            .any(|param| param.ident == target_ident);
+        if !exists {
+            return Err(syn::Error::new(
+                span,
+                format!("type_abilities refers to unknown type parameter `{name}`"),
+            ));
+        }
+    }
+
+    let mut where_bounds: Vec<syn::WherePredicate> = Vec::new();
+    for param in &type_param_idents {
+        let ident = &param.ident;
+        let mut bounds: Vec<syn::TypeParamBound> = vec![syn::parse_quote!(::sui_move::MoveType)];
+        if let Some(abilities) = type_ability_flags.get(&ident.to_string()) {
+            if abilities.copy {
+                bounds.push(syn::parse_quote!(::sui_move::HasCopy));
+            }
+            if abilities.drop {
+                bounds.push(syn::parse_quote!(::sui_move::HasDrop));
+            }
+            if abilities.store {
+                bounds.push(syn::parse_quote!(::sui_move::HasStore));
+            }
+            if abilities.key {
+                bounds.push(syn::parse_quote!(::sui_move::HasKey));
+            }
+        }
+        where_bounds.push(syn::parse_quote!(#ident: #(#bounds)+*));
+    }
+
+    if has_key
+        && !original_fields
+            .iter()
+            .any(|f| is_uid_field(f, args.uid_type.as_ref()))
+    {
+        return Err(syn::Error::new(
+            span,
+            "ability `key` requires a field `id: UID` (or uid_type override)",
+        ));
+    }
+
+    // Ability constraints derived from struct-level abilities for each field (skip injected phantoms).
+    for field in &original_fields {
+        if is_phantom_field_type(&field.ty) {
+            continue;
+        }
+        let ty = &field.ty;
+        if has_copy {
+            where_bounds.push(syn::parse_quote!(#ty: ::sui_move::HasCopy));
+        }
+        if has_drop {
+            where_bounds.push(syn::parse_quote!(#ty: ::sui_move::HasDrop));
+        }
+        if has_store {
+            where_bounds.push(syn::parse_quote!(#ty: ::sui_move::HasStore));
+        }
+    }
 
     let address = args
         .address
@@ -336,9 +568,46 @@ fn expand_move_struct(args: MoveStructArgs, input: DeriveInput) -> syn::Result<T
     Ok(expanded.into())
 }
 
+fn is_uid_field(field: &Field, uid_override: Option<&syn::Type>) -> bool {
+    let has_id_name = field.ident.as_ref().map(|i| i == "id").unwrap_or(false);
+    if !has_id_name {
+        return false;
+    }
+    if let Some(ty) = uid_override {
+        return types_equal(&field.ty, ty);
+    }
+    match &field.ty {
+        syn::Type::Path(p) => p
+            .path
+            .segments
+            .last()
+            .map(|seg| seg.ident == "UID")
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn is_phantom_field_type(ty: &syn::Type) -> bool {
+    match ty {
+        syn::Type::Path(p) => p
+            .path
+            .segments
+            .last()
+            .map(|seg| seg.ident == "PhantomData")
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn types_equal(a: &syn::Type, b: &syn::Type) -> bool {
+    quote::ToTokens::to_token_stream(a).to_string()
+        == quote::ToTokens::to_token_stream(b).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     #[test]
     fn parse_args() {
@@ -346,12 +615,19 @@ mod tests {
             address = "0x1",
             module = "vault",
             abilities = "key, store",
-            phantoms = "T"
+            phantoms = "T",
+            type_abilities = "T: store, copy"
         );
         assert_eq!(args.address.as_deref(), Some("0x1"));
         assert_eq!(args.module.as_deref(), Some("vault"));
         assert_eq!(args.name, None);
         assert_eq!(args.abilities, vec!["key".to_string(), "store".to_string()]);
         assert_eq!(args.phantoms, vec!["T".to_string()]);
+        let mut expected = BTreeMap::new();
+        expected.insert(
+            "T".to_string(),
+            vec!["store".to_string(), "copy".to_string()],
+        );
+        assert_eq!(args.type_abilities, expected);
     }
 }

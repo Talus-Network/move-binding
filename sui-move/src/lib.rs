@@ -15,8 +15,9 @@ pub use sui_move_derive::{move_module, move_struct};
 pub mod prelude {
     //! Convenient import of the core traits, macros, and common Sui types.
     pub use crate::{
-        move_module, move_struct, HasCopy, HasDrop, HasKey, HasStore, MoveInstance, MoveStruct,
-        MoveType,
+        containers::DynamicField, containers::DynamicObjectField, containers::MoveOption,
+        containers::Table, move_module, move_struct, types::ID, types::UID, Copyable, Droppable,
+        HasCopy, HasDrop, HasKey, HasStore, MoveInstance, MoveStruct, MoveType, Storable,
     };
     pub use sui_sdk_types::{Address, Identifier, StructTag, TypeTag};
 }
@@ -65,6 +66,16 @@ pub trait HasKey {}
 pub trait HasStore {}
 pub trait HasCopy {}
 pub trait HasDrop {}
+
+/// Combinators that encode Move ability surfaces into Rust type bounds.
+pub trait Storable: MoveType + HasStore {}
+impl<T: MoveType + HasStore> Storable for T {}
+
+pub trait Copyable: MoveType + HasCopy + HasDrop {}
+impl<T: MoveType + HasCopy + HasDrop> Copyable for T {}
+
+pub trait Droppable: MoveType + HasDrop {}
+impl<T: MoveType + HasDrop> Droppable for T {}
 
 /// Errors that can occur when verifying or decoding Move data.
 #[derive(thiserror::Error, Debug)]
@@ -147,4 +158,202 @@ impl<T: MoveType> MoveType for Vec<T> {
     fn type_tag_static() -> sui_sdk_types::TypeTag {
         sui_sdk_types::TypeTag::Vector(Box::new(T::type_tag_static()))
     }
+}
+
+macro_rules! impl_ability_markers_primitive {
+    ($ty:ty) => {
+        impl HasCopy for $ty {}
+        impl HasDrop for $ty {}
+        impl HasStore for $ty {}
+    };
+}
+
+impl_ability_markers_primitive!(u8);
+impl_ability_markers_primitive!(u16);
+impl_ability_markers_primitive!(u32);
+impl_ability_markers_primitive!(u64);
+impl_ability_markers_primitive!(u128);
+impl_ability_markers_primitive!(bool);
+impl_ability_markers_primitive!(sui_sdk_types::Address);
+
+impl<T: HasCopy> HasCopy for Vec<T> {}
+impl<T: HasDrop> HasDrop for Vec<T> {}
+impl<T: HasStore> HasStore for Vec<T> {}
+
+pub mod types {
+    use super::*;
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct ID {
+        pub bytes: Vec<u8>,
+    }
+
+    impl MoveType for ID {
+        fn type_tag_static() -> sui_sdk_types::TypeTag {
+            sui_sdk_types::TypeTag::Struct(Box::new(Self::struct_tag_static()))
+        }
+    }
+
+    impl MoveStruct for ID {
+        fn struct_tag_static() -> sui_sdk_types::StructTag {
+            sui_sdk_types::StructTag::new(
+                parse_address("0x2").expect("address literal"),
+                parse_identifier("object").expect("module"),
+                parse_identifier("ID").expect("name"),
+                vec![],
+            )
+        }
+    }
+
+    impl HasCopy for ID {}
+    impl HasDrop for ID {}
+    impl HasStore for ID {}
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct UID {
+        pub id: ID,
+    }
+
+    impl MoveType for UID {
+        fn type_tag_static() -> sui_sdk_types::TypeTag {
+            sui_sdk_types::TypeTag::Struct(Box::new(Self::struct_tag_static()))
+        }
+    }
+
+    impl MoveStruct for UID {
+        fn struct_tag_static() -> sui_sdk_types::StructTag {
+            sui_sdk_types::StructTag::new(
+                parse_address("0x2").expect("address literal"),
+                parse_identifier("object").expect("module"),
+                parse_identifier("UID").expect("name"),
+                vec![],
+            )
+        }
+    }
+
+    impl HasStore for UID {}
+}
+
+pub mod containers {
+    use super::*;
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct MoveOption<T> {
+        pub vec: Vec<T>,
+    }
+
+    impl<T: MoveType + HasCopy + HasDrop + HasStore> MoveType for MoveOption<T> {
+        fn type_tag_static() -> sui_sdk_types::TypeTag {
+            sui_sdk_types::TypeTag::Struct(Box::new(Self::struct_tag_static()))
+        }
+    }
+
+    impl<T: MoveType + HasCopy + HasDrop + HasStore> MoveStruct for MoveOption<T> {
+        fn struct_tag_static() -> sui_sdk_types::StructTag {
+            sui_sdk_types::StructTag::new(
+                parse_address("0x1").expect("address literal"),
+                parse_identifier("option").expect("module"),
+                parse_identifier("Option").expect("name"),
+                vec![T::type_tag_static()],
+            )
+        }
+    }
+
+    impl<T: HasCopy + HasDrop + HasStore> HasCopy for MoveOption<T> {}
+    impl<T: HasDrop + HasStore> HasDrop for MoveOption<T> {}
+    impl<T: HasStore> HasStore for MoveOption<T> {}
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct Table<K, V> {
+        pub id: crate::types::UID,
+        #[serde(skip, default)]
+        pub phantom: std::marker::PhantomData<(K, V)>,
+    }
+
+    impl<K: MoveType, V: MoveType> MoveType for Table<K, V> {
+        fn type_tag_static() -> sui_sdk_types::TypeTag {
+            sui_sdk_types::TypeTag::Struct(Box::new(Self::struct_tag_static()))
+        }
+    }
+
+    impl<K: MoveType, V: MoveType> MoveStruct for Table<K, V> {
+        fn struct_tag_static() -> sui_sdk_types::StructTag {
+            sui_sdk_types::StructTag::new(
+                parse_address("0x2").expect("address literal"),
+                parse_identifier("table").expect("module"),
+                parse_identifier("Table").expect("name"),
+                vec![K::type_tag_static(), V::type_tag_static()],
+            )
+        }
+    }
+
+    impl<K: HasStore, V: HasStore> HasStore for Table<K, V> {}
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct DynamicField<K, V> {
+        pub id: crate::types::UID,
+        pub name: K,
+        pub value: V,
+    }
+
+    impl<K: MoveType, V: MoveType> MoveType for DynamicField<K, V> {
+        fn type_tag_static() -> sui_sdk_types::TypeTag {
+            sui_sdk_types::TypeTag::Struct(Box::new(Self::struct_tag_static()))
+        }
+    }
+
+    impl<K: MoveType, V: MoveType> MoveStruct for DynamicField<K, V> {
+        fn struct_tag_static() -> sui_sdk_types::StructTag {
+            sui_sdk_types::StructTag::new(
+                parse_address("0x2").expect("address literal"),
+                parse_identifier("dynamic_field").expect("module"),
+                parse_identifier("Field").expect("name"),
+                vec![K::type_tag_static(), V::type_tag_static()],
+            )
+        }
+    }
+
+    impl<K: HasStore, V: HasStore> HasStore for DynamicField<K, V> {}
+
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct DynamicObjectField<K, V> {
+        pub id: crate::types::UID,
+        pub name: K,
+        pub value: V,
+    }
+
+    impl<K: MoveType, V: MoveType> MoveType for DynamicObjectField<K, V> {
+        fn type_tag_static() -> sui_sdk_types::TypeTag {
+            sui_sdk_types::TypeTag::Struct(Box::new(Self::struct_tag_static()))
+        }
+    }
+
+    impl<K: MoveType, V: MoveType> MoveStruct for DynamicObjectField<K, V> {
+        fn struct_tag_static() -> sui_sdk_types::StructTag {
+            sui_sdk_types::StructTag::new(
+                parse_address("0x2").expect("address literal"),
+                parse_identifier("dynamic_object_field").expect("module"),
+                parse_identifier("DynamicField").expect("name"),
+                vec![K::type_tag_static(), V::type_tag_static()],
+            )
+        }
+    }
+
+    impl<K: HasStore, V: HasStore> HasStore for DynamicObjectField<K, V> {}
+}
+
+/// Ability-aware decoding helpers.
+pub fn decode_storable<T: Storable + DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
+    Ok(T::from_bcs(bytes)?)
+}
+
+pub fn decode_copyable<T: Copyable + DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
+    Ok(T::from_bcs(bytes)?)
+}
+
+pub fn decode_keyed<T: MoveStruct + HasKey + DeserializeOwned>(
+    type_tag: sui_sdk_types::TypeTag,
+    bytes: &[u8],
+) -> Result<MoveInstance<T>, DecodeError> {
+    MoveInstance::from_raw_type(type_tag, bytes)
 }
