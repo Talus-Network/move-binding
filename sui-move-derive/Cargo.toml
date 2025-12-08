@@ -2,7 +2,6 @@
 name = "sui-move-derive"
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
 description = "Procedural macros for sui-move typed structs."
 
 [lib]
