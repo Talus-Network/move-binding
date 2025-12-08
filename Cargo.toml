@@ -1,9 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "move-binding-core",
-    "move-binding-env",
-    "move-binding-bindgen",
+    "sui-move",
+    "sui-move-derive",
 ]
 
 [workspace.dependencies]
@@ -13,3 +12,7 @@ thiserror = "1.0"
 sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", features = ["serde"] }
 sui-rpc = { git = "https://github.com/mystenlabs/sui-rust-sdk" }
 sui-transaction-builder = { git = "https://github.com/mystenlabs/sui-rust-sdk" }
+bcs = "0.1"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

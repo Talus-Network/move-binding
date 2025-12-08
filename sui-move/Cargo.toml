@@ -1,0 +1,14 @@
+[package]
+name = "sui-move"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Move-shaped typed layer for Rust, built on top of sui-sdk-types."
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+bcs = { workspace = true }
+sui-sdk-types = { workspace = true }
+thiserror = { workspace = true }
+sui-move-derive = { path = "../sui-move-derive" }
+serde_json = "1.0"
