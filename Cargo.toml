@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "sui-move",
+    "sui-move-derive",
 ]
 
 [workspace.dependencies]
@@ -10,3 +11,6 @@ serde_json = "1.0"
 thiserror = "1.0"
 bcs = "0.1.6"
 sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", features = ["serde"] }
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

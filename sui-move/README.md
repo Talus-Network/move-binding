@@ -58,6 +58,24 @@ impl MoveStruct for MyCounter {
 impl HasStore for MyCounter {}
 ```
 
+### Macros (feature `derive`)
+
+If you prefer, enable the `derive` feature to use attribute macros for defining Move-shaped
+structs.
+
+```rust
+#[cfg(feature = "derive")]
+mod example {
+    use sui_move::move_struct;
+
+    #[move_struct(address = "0x1", module = "vault", abilities = "key, store")]
+    pub struct Vault {
+        pub id: sui_move::types::UID,
+        pub value: u64,
+    }
+}
+```
+
 ### Move abilities as Rust bounds
 
 Move abilities are modeled as marker traits (`HasKey`, `HasStore`, `HasCopy`, `HasDrop`), plus
@@ -132,4 +150,3 @@ let _tag = <Coin<SUI> as MoveType>::type_tag_static();
 - `sui_move::containers`: Move framework container shapes
 - `sui_move::primitives`: Sui framework “primitive” structs
 - `sui_move::decode`: ability-aware decode helpers
-

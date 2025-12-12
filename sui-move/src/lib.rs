@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
+#[cfg(feature = "derive")]
+pub use sui_move_derive::{move_module, move_struct};
+
 pub mod prelude {
     //! Convenient imports for working with this crate.
     //!
@@ -14,7 +17,15 @@ pub mod prelude {
         containers::Table, types::ID, types::UID, Copyable, Droppable, HasCopy, HasDrop, HasKey,
         HasStore, MoveInstance, MoveStruct, MoveType, Storable,
     };
+    #[cfg(feature = "derive")]
+    pub use crate::{move_module, move_struct};
     pub use sui_sdk_types::{Address, Identifier, StructTag, TypeTag};
+}
+
+#[doc(hidden)]
+pub mod __private {
+    pub use serde;
+    pub use sui_sdk_types;
 }
 
 mod builtins;
