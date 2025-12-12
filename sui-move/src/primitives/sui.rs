@@ -2,7 +2,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, HasDrop, MoveStruct, MoveType};
 
-/// 0x2::sui::SUI (the Sui coin type)
+/// Move `0x2::sui::SUI` (the Sui coin type).
+///
+/// This is the type argument used for `coin::Coin<SUI>` and `balance::Balance<SUI>`.
+///
+/// # Example
+/// ```
+/// use sui_move::{sui::SUI, MoveStruct};
+///
+/// let tag = SUI::struct_tag_static();
+/// assert_eq!(tag.module().to_string(), "sui");
+/// assert_eq!(tag.name().to_string(), "SUI");
+/// ```
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SUI;
 

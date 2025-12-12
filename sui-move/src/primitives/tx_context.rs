@@ -3,6 +3,16 @@ use serde::{Deserialize, Serialize};
 use crate::{parse_address, parse_identifier, MoveStruct, MoveType};
 
 /// Phantom placeholder for `0x2::tx_context::TxContext` so it can appear in type tags.
+///
+/// This type is not meant to be instantiated; it exists to build tags for entry function
+/// signatures that reference `TxContext`.
+///
+/// # Example
+/// ```
+/// use sui_move::{tx_context::TxContext, MoveType};
+///
+/// let _tag = <TxContext as MoveType>::type_tag_static();
+/// ```
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TxContext;
 

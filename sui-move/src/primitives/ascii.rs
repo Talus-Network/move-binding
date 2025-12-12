@@ -2,6 +2,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, MoveStruct, MoveType};
 
+/// Move `0x1::ascii::String`.
+///
+/// This is **not** Rust's `String`; it is the Sui Move `ascii::String` wrapper around bytes.
+///
+/// # Example
+/// ```
+/// use sui_move::{ascii, MoveStruct};
+///
+/// let tag = ascii::String::struct_tag_static();
+/// assert_eq!(tag.module().to_string(), "ascii");
+/// assert_eq!(tag.name().to_string(), "String");
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct String(pub Vec<u8>);
 

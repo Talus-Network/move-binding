@@ -1,3 +1,11 @@
+//! Minimal mirrors of common Sui Move framework structs.
+//!
+//! These types exist to:
+//! - construct correct Move `TypeTag`/`StructTag` values, and
+//! - enable typed decoding of on-chain values into Rust.
+//!
+//! They are intentionally small “shape” types and do not provide any on-chain behavior.
+
 pub mod ascii;
 pub mod bag;
 pub mod balance;

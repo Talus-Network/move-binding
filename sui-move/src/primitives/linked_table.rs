@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, MoveStruct, MoveType};
 
+/// Move `0x2::linked_table::LinkedTable<K, V>`.
+///
+/// A table-like structure used by the Sui framework.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkedTable<K: MoveType + crate::HasCopy, V: MoveType> {
     pub id: crate::types::UID,

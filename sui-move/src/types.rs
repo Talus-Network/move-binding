@@ -1,7 +1,23 @@
+//! Core Sui object types from the Move framework.
+//!
+//! These types are widely used by other Sui framework structs (e.g. `coin::Coin<T>`).
+
 use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, HasCopy, HasDrop, HasStore, MoveStruct, MoveType};
 
+/// Move `0x2::object::ID`.
+///
+/// In the Sui framework this is a thin wrapper around a `vector<u8>` that stores an object ID.
+///
+/// # Example
+/// ```
+/// use sui_move::prelude::*;
+///
+/// let tag = sui_move::types::ID::struct_tag_static();
+/// assert_eq!(tag.module().to_string(), "object");
+/// assert_eq!(tag.name().to_string(), "ID");
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ID {
     pub bytes: Vec<u8>,
@@ -28,6 +44,18 @@ impl HasCopy for ID {}
 impl HasDrop for ID {}
 impl HasStore for ID {}
 
+/// Move `0x2::object::UID`.
+///
+/// This is the “unique ID” embedded in `key` objects.
+///
+/// # Example
+/// ```
+/// use sui_move::prelude::*;
+///
+/// let tag = sui_move::types::UID::struct_tag_static();
+/// assert_eq!(tag.module().to_string(), "object");
+/// assert_eq!(tag.name().to_string(), "UID");
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UID {
     pub id: ID,

@@ -1,3 +1,10 @@
+//! Implementations of [`MoveType`](crate::MoveType) and ability markers for Rust built-ins.
+//!
+//! This module provides mappings for:
+//! - integer and boolean primitives (`u8`, `u16`, `u32`, `u64`, `u128`, `bool`)
+//! - `sui_sdk_types::Address`
+//! - `Vec<T>` as Move `vector<T>`
+
 use crate::{HasCopy, HasDrop, HasStore, MoveType};
 
 macro_rules! impl_primitive {

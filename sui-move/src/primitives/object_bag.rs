@@ -2,6 +2,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, MoveStruct, MoveType};
 
+/// Move `0x2::object_bag::ObjectBag`.
+///
+/// A heterogeneous container which stores objects (`key` values).
+///
+/// # Example
+/// ```
+/// use sui_move::{object_bag::ObjectBag, MoveType};
+///
+/// let _tag = <ObjectBag as MoveType>::type_tag_static();
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectBag {
     pub id: crate::types::UID,

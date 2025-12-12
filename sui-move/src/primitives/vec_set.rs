@@ -2,6 +2,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, MoveStruct, MoveType};
 
+/// Move `0x2::vec_set::VecSet<T>`.
+///
+/// A small set implementation backed by a vector. In the Move framework, the type parameter must
+/// be `copy`.
+///
+/// # Example
+/// ```
+/// use sui_move::{prelude::*, vec_set::VecSet};
+///
+/// let _tag = <VecSet<u64> as MoveType>::type_tag_static();
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct VecSet<T: MoveType + crate::HasCopy>(pub Vec<T>);

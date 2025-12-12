@@ -2,7 +2,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, HasStore, MoveStruct, MoveType};
 
-/// 0x2::balance::Balance
+/// Move `0x2::balance::Balance<T>`.
+///
+/// A `store`-only value used by many Sui framework structs.
+///
+/// # Example
+/// ```
+/// use sui_move::{balance::Balance, sui::SUI, MoveType};
+///
+/// let _tag = <Balance<SUI> as MoveType>::type_tag_static();
+/// ```
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Balance<T> {
     pub value: u64,

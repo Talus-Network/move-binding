@@ -2,7 +2,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, types::UID, HasKey, HasStore, MoveStruct, MoveType};
 
-/// 0x2::clock::Clock
+/// Move `0x2::clock::Clock`.
+///
+/// A `key` object that stores the current on-chain timestamp (milliseconds since epoch).
+///
+/// # Example
+/// ```
+/// use sui_move::{clock::Clock, MoveType};
+///
+/// let _tag = <Clock as MoveType>::type_tag_static();
+/// ```
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Clock {
     pub id: UID,

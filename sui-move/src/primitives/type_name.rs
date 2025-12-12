@@ -2,7 +2,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, MoveStruct, MoveType};
 
-/// Mirror of `std::type_name::TypeName`.
+/// Move `0x1::type_name::TypeName`.
+///
+/// This is used in the Sui framework to carry a runtime type name.
+///
+/// # Example
+/// ```
+/// use sui_move::{type_name::TypeName, MoveStruct};
+///
+/// let tag = TypeName::struct_tag_static();
+/// assert_eq!(tag.module().to_string(), "type_name");
+/// assert_eq!(tag.name().to_string(), "TypeName");
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TypeName {
     pub name: String,

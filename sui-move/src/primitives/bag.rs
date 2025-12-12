@@ -2,7 +2,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, types::UID, HasKey, HasStore, MoveStruct, MoveType};
 
-/// 0x2::bag::Bag
+/// Move `0x2::bag::Bag`.
+///
+/// A `key` object representing a heterogeneous container in the Sui framework.
+///
+/// # Example
+/// ```
+/// use sui_move::{bag::Bag, MoveType};
+///
+/// let _tag = <Bag as MoveType>::type_tag_static();
+/// ```
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bag {
     pub id: UID,

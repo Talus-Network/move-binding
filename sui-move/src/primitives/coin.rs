@@ -5,7 +5,16 @@ use crate::{
     MoveType,
 };
 
-/// 0x2::coin::Coin
+/// Move `0x2::coin::Coin<T>`.
+///
+/// A `key` object holding a [`Balance<T>`](crate::balance::Balance).
+///
+/// # Example
+/// ```
+/// use sui_move::{coin::Coin, sui::SUI, MoveType};
+///
+/// let _tag = <Coin<SUI> as MoveType>::type_tag_static();
+/// ```
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Coin<T> {
     pub id: UID,

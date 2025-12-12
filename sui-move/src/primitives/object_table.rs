@@ -2,6 +2,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, MoveStruct, MoveType};
 
+/// Move `0x2::object_table::ObjectTable<K, V>`.
+///
+/// This is a framework table where the value type is itself an object (`key`).
+///
+/// The type bounds mirror the Move framework constraints:
+/// - `K` is `copy + drop + store`
+/// - `V` is `key + store`
+///
+/// # Example
+/// ```
+/// use sui_move::{coin::Coin, object_table::ObjectTable, prelude::*, sui::SUI};
+///
+/// let _tag = <ObjectTable<u64, Coin<SUI>> as MoveType>::type_tag_static();
+/// ```
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectTable<
     K: MoveType + crate::HasCopy + crate::HasDrop + crate::HasStore,

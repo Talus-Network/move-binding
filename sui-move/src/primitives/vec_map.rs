@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, MoveStruct, MoveType};
 
+/// Move `0x2::vec_map::Entry<K, V>`.
+///
+/// The key type must be `copy` in the framework.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct Entry<K: crate::MoveType + crate::HasCopy, V: crate::MoveType> {
@@ -30,6 +33,17 @@ impl<K: MoveType + crate::HasCopy + Clone, V: MoveType + Clone> crate::HasCopy f
 impl<K: MoveType + crate::HasCopy, V: MoveType> crate::HasDrop for Entry<K, V> {}
 impl<K: MoveType + crate::HasCopy, V: MoveType> crate::HasStore for Entry<K, V> {}
 
+/// Move `0x2::vec_map::VecMap<K, V>`.
+///
+/// A small ordered map implementation backed by a vector of entries. The key type must be
+/// `copy` in the framework.
+///
+/// # Example
+/// ```
+/// use sui_move::{prelude::*, vec_map::VecMap};
+///
+/// let _tag = <VecMap<u64, bool> as MoveType>::type_tag_static();
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct VecMap<K: crate::MoveType + crate::HasCopy, V: crate::MoveType> {

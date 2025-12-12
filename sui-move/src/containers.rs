@@ -1,7 +1,29 @@
+//! Common Move framework container types.
+//!
+//! These are “shape” types: they exist to preserve and compute correct Move type tags and to
+//! support typed decoding. They do not implement any on-chain behavior.
+
 use serde::{Deserialize, Serialize};
 
 use crate::{parse_address, parse_identifier, HasCopy, HasDrop, HasStore, MoveStruct, MoveType};
 
+/// Move `0x1::option::Option<T>`.
+///
+/// In Move, `Option<T>` is represented as a `vector<T>` with length `0` (none) or `1` (some).
+///
+/// # Example
+/// ```
+/// use sui_move::prelude::*;
+/// use sui_move::containers::MoveOption;
+///
+/// match <MoveOption<u64> as MoveType>::type_tag_static() {
+///     TypeTag::Struct(tag) => {
+///         assert_eq!(tag.module().to_string(), "option");
+///         assert_eq!(tag.name().to_string(), "Option");
+///     }
+///     other => panic!("expected struct type tag, got {other:?}"),
+/// }
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveOption<T> {
     pub vec: Vec<T>,
@@ -28,6 +50,10 @@ impl<T: HasCopy + HasDrop + HasStore> HasCopy for MoveOption<T> {}
 impl<T: HasDrop + HasStore> HasDrop for MoveOption<T> {}
 impl<T: HasStore> HasStore for MoveOption<T> {}
 
+/// Move `0x2::table::Table<K, V>`.
+///
+/// The Sui framework table stores data under a `UID`. In Rust this struct carries the ID and a
+/// phantom to preserve type parameters.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Table<K, V> {
     pub id: crate::types::UID,
@@ -54,6 +80,9 @@ impl<K: MoveType, V: MoveType> MoveStruct for Table<K, V> {
 
 impl<K: HasStore, V: HasStore> HasStore for Table<K, V> {}
 
+/// Move `0x2::dynamic_field::Field<K, V>`.
+///
+/// Dynamic fields are stored under an owning object and addressed by a “name” value.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DynamicField<K, V> {
     pub id: crate::types::UID,
@@ -80,6 +109,9 @@ impl<K: MoveType, V: MoveType> MoveStruct for DynamicField<K, V> {
 
 impl<K: HasStore, V: HasStore> HasStore for DynamicField<K, V> {}
 
+/// Move `0x2::dynamic_object_field::DynamicField<K, V>`.
+///
+/// This variant stores an object value (a `key` struct) in the dynamic field.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DynamicObjectField<K, V> {
     pub id: crate::types::UID,

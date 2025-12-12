@@ -1,8 +1,4 @@
-//! Move-shaped typed layer for Rust, built on top of `sui-sdk-types`.
-//!
-//! This crate exposes a small set of traits that mirror Move's type system
-//! (type tags, struct tags, abilities) plus helpers for safely decoding data
-//! that carries a Move type tag.
+#![doc = include_str!("../README.md")]
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -10,7 +6,9 @@ use std::fmt;
 use std::str::FromStr;
 
 pub mod prelude {
-    //! Convenient import of the core traits and common Sui types.
+    //! Convenient imports for working with this crate.
+    //!
+    //! Intended for end-user code and examples.
     pub use crate::{
         containers::DynamicField, containers::DynamicObjectField, containers::MoveOption,
         containers::Table, types::ID, types::UID, Copyable, Droppable, HasCopy, HasDrop, HasKey,
@@ -27,8 +25,18 @@ pub mod types;
 pub use decode::{decode_copyable, decode_keyed, decode_storable};
 pub use primitives::*;
 
-/// A Move type. Implementors know how to produce their `TypeTag` and
-/// serialize/deserialize themselves with BCS/serde.
+/// A Rust type that corresponds to a Move type.
+///
+/// Implementors provide a static [`TypeTag`](sui_sdk_types::TypeTag) (including any type
+/// arguments). This enables strongly-typed construction and verification of Move type tags and
+/// safe BCS decoding.
+///
+/// # Example
+/// ```
+/// use sui_move::prelude::*;
+///
+/// assert_eq!(<u64 as MoveType>::type_tag_static(), TypeTag::U64);
+/// ```
 pub trait MoveType: Serialize + for<'de> Deserialize<'de> + fmt::Debug + PartialEq + Eq {
     /// Construct the static type tag for this type (including type arguments).
     fn type_tag_static() -> sui_sdk_types::TypeTag;
@@ -38,10 +46,12 @@ pub trait MoveType: Serialize + for<'de> Deserialize<'de> + fmt::Debug + Partial
         Self::type_tag_static()
     }
 
+    /// Serialize this value with BCS.
     fn to_bcs(&self) -> Result<Vec<u8>, bcs::Error> {
         bcs::to_bytes(self)
     }
 
+    /// Deserialize a value of this type from BCS bytes.
     fn from_bcs(bytes: &[u8]) -> Result<Self, bcs::Error>
     where
         Self: Sized,
@@ -49,12 +59,25 @@ pub trait MoveType: Serialize + for<'de> Deserialize<'de> + fmt::Debug + Partial
         bcs::from_bytes(bytes)
     }
 
+    /// Convert this value into JSON using `serde_json`.
     fn to_json(&self) -> serde_json::Value {
         serde_json::to_value(self).expect("serialization should not fail")
     }
 }
 
-/// A Move struct (including any type parameters).
+/// A Move struct type (including any type parameters).
+///
+/// Move structs have both a [`TypeTag`](sui_sdk_types::TypeTag) and a
+/// [`StructTag`](sui_sdk_types::StructTag).
+///
+/// # Example
+/// ```
+/// use sui_move::prelude::*;
+///
+/// let tag = sui_move::types::UID::struct_tag_static();
+/// assert_eq!(tag.module().to_string(), "object");
+/// assert_eq!(tag.name().to_string(), "UID");
+/// ```
 pub trait MoveStruct: MoveType {
     /// Construct the static struct tag (including type arguments).
     fn struct_tag_static() -> sui_sdk_types::StructTag;
@@ -64,19 +87,27 @@ pub trait MoveStruct: MoveType {
     }
 }
 
-/// Ability markers matching Move abilities.
+/// Marker trait for the Move `key` ability.
 pub trait HasKey {}
+
+/// Marker trait for the Move `store` ability.
 pub trait HasStore {}
+
+/// Marker trait for the Move `copy` ability.
 pub trait HasCopy: Clone {}
+
+/// Marker trait for the Move `drop` ability.
 pub trait HasDrop {}
 
-/// Combinators that encode Move ability surfaces into Rust type bounds.
+/// A convenient bound for types that have the `store` ability.
 pub trait Storable: MoveType + HasStore {}
 impl<T: MoveType + HasStore> Storable for T {}
 
+/// A convenient bound for types that have `copy` and `drop`.
 pub trait Copyable: MoveType + HasCopy + HasDrop + Clone {}
 impl<T: MoveType + HasCopy + HasDrop + Clone> Copyable for T {}
 
+/// A convenient bound for types that have the `drop` ability.
 pub trait Droppable: MoveType + HasDrop {}
 impl<T: MoveType + HasDrop> Droppable for T {}
 
@@ -96,7 +127,22 @@ pub enum DecodeError {
     Address(String),
 }
 
-/// A typed value accompanied by its Move type tag.
+/// A value paired with the Move type tag it was accompanied by.
+///
+/// This is useful when you receive `(type_tag, bcs_bytes)` from the chain and want to both verify
+/// the tag and decode the value.
+///
+/// # Example
+/// ```
+/// use sui_move::{MoveInstance, MoveType};
+///
+/// let value = 7u64;
+/// let bytes = value.to_bcs().unwrap();
+///
+/// let inst = MoveInstance::<u64>::from_raw_type(<u64 as MoveType>::type_tag_static(), &bytes)
+///     .unwrap();
+/// assert_eq!(inst.value, 7);
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MoveInstance<T: MoveType> {
     pub type_tag: sui_sdk_types::TypeTag,
@@ -121,18 +167,46 @@ impl<T: MoveType + DeserializeOwned> MoveInstance<T> {
     }
 }
 
-/// Utility used by the derive macros to construct identifiers and addresses
-/// from string literals at runtime.
+/// Parse a Move identifier (e.g. module or struct name).
+///
+/// This is primarily a convenience for building `StructTag`s in manual [`MoveStruct`] impls.
+///
+/// # Example
+/// ```
+/// use sui_move::parse_identifier;
+///
+/// assert_eq!(parse_identifier("coin").unwrap().to_string(), "coin");
+/// ```
 pub fn parse_identifier(value: &str) -> Result<sui_sdk_types::Identifier, DecodeError> {
     sui_sdk_types::Identifier::from_str(value)
         .map_err(|_| DecodeError::Identifier(value.to_string()))
 }
 
+/// Parse a Sui address (e.g. `"0x2"`).
+///
+/// # Example
+/// ```
+/// use std::str::FromStr;
+/// use sui_move::parse_address;
+/// use sui_sdk_types::Address;
+///
+/// assert_eq!(
+///     parse_address("0x2").unwrap(),
+///     Address::from_str("0x2").unwrap()
+/// );
+/// ```
 pub fn parse_address(value: &str) -> Result<sui_sdk_types::Address, DecodeError> {
     sui_sdk_types::Address::from_str(value).map_err(|_| DecodeError::Address(value.to_string()))
 }
 
 /// Convenience helper to get a static `TypeTag` for any `MoveType`.
+///
+/// # Example
+/// ```
+/// use sui_move::{type_tag_of, MoveType};
+///
+/// assert_eq!(type_tag_of::<u64>(), <u64 as MoveType>::type_tag_static());
+/// ```
 pub fn type_tag_of<T: MoveType>() -> sui_sdk_types::TypeTag {
     T::type_tag_static()
 }
