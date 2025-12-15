@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "sui-move",
     "sui-move-derive",
+    "sui-move-call",
 ]
 
 [workspace.dependencies]
