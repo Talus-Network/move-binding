@@ -4,6 +4,7 @@ members = [
     "sui-move",
     "sui-move-derive",
     "sui-move-call",
+    "sui-move-ptb",
 ]
 
 [workspace.dependencies]
