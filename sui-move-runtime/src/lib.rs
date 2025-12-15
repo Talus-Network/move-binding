@@ -5,7 +5,7 @@ mod effects;
 mod handles;
 mod tx;
 
-pub use crate::handles::{Object, ReceivingObject, SharedObject};
+pub use crate::handles::{AnyObject, Object, ReceivingObject, SharedObject};
 pub use crate::tx::{
     BcsValue, CommandOutputs, InspectOptions, InspectReceipt, Receipt, SimulateOptions,
     SimulationReceipt, TxOptions,
@@ -183,6 +183,46 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         }
 
         Ok(self.rt.registry.intern_object::<T>(reference))
+    }
+
+    /// Construct an object handle regardless of whether it is owned/immutable or shared on-chain.
+    ///
+    /// - If the object is owned/immutable, this returns [`AnyObject`] wrapping an [`Object<T>`].
+    /// - If the object is shared, this returns [`AnyObject`] wrapping an **immutable** [`SharedObject<T>`].
+    ///
+    /// If you need a mutable shared input, call [`AnyObject::as_shared_mutable`] on the returned
+    /// value (or use [`Read::shared_mutable`] directly).
+    pub async fn object_any<T: sui_move::MoveStruct + sui_move::HasKey>(
+        &mut self,
+        object_id: Address,
+    ) -> Result<AnyObject<T>, Error> {
+        let (reference, owner) =
+            tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
+
+        match tx::classify_owner(&owner) {
+            tx::OwnerKind::ImmutableOrOwned => Ok(AnyObject::from_object(
+                self.rt.registry.intern_object::<T>(reference),
+            )),
+            tx::OwnerKind::SharedLike => {
+                let Some(initial_shared_version) = tx::shared_version_from_owner(&owner) else {
+                    return Err(Error::ObjectKind {
+                        object_id,
+                        expected: "shared",
+                        actual: "unknown",
+                    });
+                };
+
+                Ok(AnyObject::from_shared(SharedObject::immutable(
+                    object_id,
+                    initial_shared_version,
+                )))
+            }
+            tx::OwnerKind::Unknown => Err(Error::ObjectKind {
+                object_id,
+                expected: "immutable-or-owned or shared",
+                actual: "unknown",
+            }),
+        }
     }
 
     /// Construct a receiving object handle by fetching the latest `ObjectReference`.
@@ -426,9 +466,9 @@ macro_rules! debug_time {
 /// - `sui-move-ptb` prelude (PTB building)
 pub mod prelude {
     pub use crate::{
-        debug_time, inspect_time, move_time, simulate_time, BcsValue, CommandOutputs, Error,
-        InspectOptions, InspectReceipt, MoveTime, Object, Read, Receipt, ReceivingObject, Runtime,
-        SharedObject, SimulateOptions, SimulationReceipt, TxOptions,
+        debug_time, inspect_time, move_time, simulate_time, AnyObject, BcsValue, CommandOutputs,
+        Error, InspectOptions, InspectReceipt, MoveTime, Object, Read, Receipt, ReceivingObject,
+        Runtime, SharedObject, SimulateOptions, SimulationReceipt, TxOptions,
     };
     pub use sui_move_call::prelude::*;
     pub use sui_move_ptb::prelude::*;

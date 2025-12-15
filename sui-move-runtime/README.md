@@ -79,6 +79,7 @@ async fn demo() -> Result<(), Error> {
   - `Object<T>`: immutable-or-owned input (`Input::ImmutableOrOwned`)
   - `ReceivingObject<T>`: receiving input (`Input::Receiving`)
   - `SharedObject<T>`: shared input (`Input::Shared`)
+  - `AnyObject<T>`: convenience wrapper for owned/shared (shared defaults to immutable)
 - Move-time actions:
   - `commit`: signs/submits/waits and then updates handles
   - `simulate`: checks enabled, no mutation, no handle updates
@@ -97,6 +98,9 @@ This crate mirrors those shapes:
 
 - Use `Read::object::<T>(id)` to get an `Object<T>` for immutable/owned objects.
   - If the object is shared on-chain, this returns `Error::ObjectKind`.
+- Use `Read::object_any::<T>(id)` to get an `AnyObject<T>` that works for both owned/immutable and
+  shared objects (shared defaults to immutable).
+  - If you need a mutable shared input, call `any.as_shared_mutable()?` to get a `SharedObject<T>`.
 - Use `Read::shared_immutable::<T>(id)` / `Read::shared_mutable::<T>(id)` to get a `SharedObject<T>`.
 - Use `Read::receiving_object::<T>(id)` to get a `ReceivingObject<T>`.
 

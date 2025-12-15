@@ -237,6 +237,7 @@ pub(crate) async fn fetch_object_reference_and_owner(
 pub(crate) enum OwnerKind {
     ImmutableOrOwned,
     SharedLike,
+    Unknown,
 }
 
 impl OwnerKind {
@@ -244,11 +245,12 @@ impl OwnerKind {
         match self {
             OwnerKind::ImmutableOrOwned => "immutable-or-owned",
             OwnerKind::SharedLike => "shared",
+            OwnerKind::Unknown => "unknown",
         }
     }
 
     pub(crate) fn is_shared_like(self) -> bool {
-        matches!(self, OwnerKind::SharedLike)
+        matches!(self, OwnerKind::SharedLike | OwnerKind::Unknown)
     }
 }
 
@@ -256,7 +258,7 @@ pub(crate) fn classify_owner(owner: &Owner) -> OwnerKind {
     match owner {
         Owner::Shared(_) | Owner::ConsensusAddress { .. } => OwnerKind::SharedLike,
         Owner::Immutable | Owner::Address(_) | Owner::Object(_) => OwnerKind::ImmutableOrOwned,
-        _ => OwnerKind::SharedLike,
+        _ => OwnerKind::Unknown,
     }
 }
 
