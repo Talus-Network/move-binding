@@ -1,0 +1,18 @@
+[package]
+name = "sui-move-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "Runtime layer for typed Move interactions on Sui (submit, wait, auto-update handles)."
+readme = "README.md"
+
+[dependencies]
+thiserror = { workspace = true }
+sui-sdk-types = { workspace = true }
+sui-move = { path = "../sui-move" }
+sui-move-call = { path = "../sui-move-call" }
+sui-move-ptb = { path = "../sui-move-ptb" }
+sui-rpc = { workspace = true }
+sui-crypto = { workspace = true }
+
+[dev-dependencies]
+sui-move = { path = "../sui-move", features = ["derive"] }

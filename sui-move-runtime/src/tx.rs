@@ -1,0 +1,603 @@
+use std::time::Duration;
+
+use sui_crypto::SuiSigner;
+use sui_rpc::client::ExecuteAndWaitError;
+use sui_rpc::field::FieldMaskTree;
+use sui_rpc::proto::sui::rpc::v2::{
+    simulate_transaction_request::TransactionChecks, transaction_kind, ExecuteTransactionRequest,
+    GetObjectRequest, ProgrammableTransaction as ProtoProgrammableTransaction,
+    SimulateTransactionRequest, SimulateTransactionResponse, Transaction as ProtoTransaction,
+    TransactionKind as ProtoTransactionKind,
+};
+use sui_rpc::proto::TryFromProtoError;
+use sui_sdk_types::{
+    Address, Digest, GasPayment, ObjectReference, Owner, StructTag, Transaction as SdkTransaction,
+    TransactionEffects, TransactionExpiration, TransactionKind, TypeTag, UserSignature,
+};
+
+/// Additional transaction options for submitting a PTB.
+#[derive(Clone, Debug, Default)]
+pub struct TxOptions {
+    /// Optional sponsor address (gas owner). Defaults to sender.
+    pub sponsor: Option<Address>,
+    /// Optional explicit gas object reference. Defaults to selecting one coin owned by the gas owner.
+    pub gas: Option<ObjectReference>,
+    /// Optional explicit gas budget. Defaults to `Runtime::default_gas_budget`.
+    pub gas_budget: Option<u64>,
+    /// Optional explicit gas price. Defaults to the reference gas price from RPC.
+    pub gas_price: Option<u64>,
+    /// Optional explicit expiration (TTL). Defaults to `None`.
+    pub expiration: Option<TransactionExpiration>,
+}
+
+/// Receipt for a submitted transaction.
+#[derive(Clone, Debug)]
+pub struct Receipt {
+    /// Transaction digest.
+    pub digest: Digest,
+    /// Transaction effects, if returned by RPC.
+    pub effects: Option<TransactionEffects>,
+    /// The user signature used for submission.
+    pub signature: UserSignature,
+}
+
+/// Options for running a transaction in dry-run mode (checks enabled).
+#[derive(Clone, Debug)]
+pub struct SimulateOptions {
+    /// Whether the server should perform gas selection automatically.
+    ///
+    /// When `true` (default), the request can omit gas payment information and the server will
+    /// pick a gas coin and budget for simulation.
+    ///
+    /// Note: this option is ignored when checks are disabled (dev-inspect mode).
+    ///
+    /// If you set this to `false`, the simulation RPC may require an explicit gas payment on the
+    /// provided transaction. The current `sui-move-runtime` simulation helper does not model
+    /// explicit gas payment configuration, so `false` is generally only useful if your RPC accepts
+    /// omitted gas payment without auto-selection.
+    pub do_gas_selection: bool,
+}
+
+impl Default for SimulateOptions {
+    fn default() -> Self {
+        Self {
+            do_gas_selection: true,
+        }
+    }
+}
+
+/// Options for running a transaction in dev-inspect mode (checks disabled).
+///
+/// This is currently an empty placeholder for future knobs (e.g. requesting JSON renderings of
+/// outputs).
+#[derive(Clone, Debug, Default)]
+pub struct InspectOptions {}
+
+/// Receipt for a simulated transaction (dry-run).
+///
+/// Returned by [`crate::MoveTime::simulate`]. This does not mutate chain state and does not update
+/// runtime-owned handles.
+#[derive(Clone, Debug)]
+pub struct SimulationReceipt {
+    /// Transaction digest, if returned by RPC.
+    pub digest: Option<Digest>,
+    /// Transaction effects, if returned by RPC.
+    pub effects: Option<TransactionEffects>,
+}
+
+/// Receipt for a dev-inspected transaction (checks disabled) including command outputs.
+///
+/// Returned by [`crate::MoveTime::inspect`]. This does not mutate chain state and does not update
+/// runtime-owned handles.
+///
+/// `outputs[i]` corresponds to the `i`-th PTB command.
+#[derive(Clone, Debug)]
+pub struct InspectReceipt {
+    /// Transaction digest, if returned by RPC.
+    pub digest: Option<Digest>,
+    /// Transaction effects, if returned by RPC.
+    pub effects: Option<TransactionEffects>,
+    /// Command outputs (return values + mutated-by-ref values), if requested.
+    pub outputs: Vec<CommandOutputs>,
+}
+
+/// Per-command outputs returned by dev-inspect.
+///
+/// This struct is intentionally minimal: it only contains raw BCS blobs.
+#[derive(Clone, Debug, Default)]
+pub struct CommandOutputs {
+    /// Values returned from the command.
+    pub return_values: Vec<BcsValue>,
+    /// Values mutated by reference during the command.
+    pub mutated_by_ref: Vec<BcsValue>,
+}
+
+/// A raw BCS value returned by simulation/dev-inspect.
+///
+/// You can decode this using `sui_sdk_types::bcs` (enabled via the `serde` feature on
+/// `sui-sdk-types`):
+///
+/// ```
+/// use sui_move_runtime::BcsValue;
+/// use sui_sdk_types::bcs::{FromBcs, ToBcs};
+///
+/// let value = BcsValue {
+///     name: Some("u64".to_owned()),
+///     bytes: 10u64.to_bcs().unwrap(),
+/// };
+///
+/// let decoded = u64::from_bcs(&value.bytes).unwrap();
+/// assert_eq!(decoded, 10);
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct BcsValue {
+    /// Optional type name for this BCS blob, if provided by RPC.
+    pub name: Option<String>,
+    /// Raw BCS bytes.
+    pub bytes: Vec<u8>,
+}
+
+/// Errors for submit/wait operations.
+#[derive(thiserror::Error, Debug)]
+pub enum TxError {
+    /// Signing failed.
+    #[error("sign transaction: {0}")]
+    Sign(String),
+
+    /// RPC execution failed.
+    #[error("execute transaction: {0}")]
+    Execute(String),
+
+    /// RPC returned a response missing the executed transaction.
+    #[error("missing executed transaction in response")]
+    MissingExecuted,
+
+    /// Proto conversion failed.
+    #[error("proto conversion: {0}")]
+    Proto(String),
+
+    /// Gas selection failed (no gas coin or RPC error).
+    #[error("select gas: {0}")]
+    Gas(String),
+}
+
+/// Errors for simulate/dev-inspect operations.
+#[derive(thiserror::Error, Debug)]
+pub enum SimulateError {
+    /// RPC error.
+    #[error("simulate transaction: {0}")]
+    Rpc(String),
+
+    /// RPC returned a response missing the executed transaction.
+    #[error("missing executed transaction in response")]
+    MissingExecuted,
+
+    /// Proto conversion failed.
+    #[error("proto conversion: {0}")]
+    Proto(String),
+}
+
+/// Errors for read/fetch helpers.
+#[derive(thiserror::Error, Debug)]
+pub enum RpcError {
+    /// RPC error.
+    #[error("rpc: {0}")]
+    Rpc(String),
+    /// Object not found.
+    #[error("object {0} not found")]
+    Missing(Address),
+    /// Failed to convert protobuf object.
+    #[error("proto conversion: {0}")]
+    Proto(String),
+}
+
+pub(crate) async fn fetch_object_reference_and_owner(
+    client: &mut sui_rpc::Client,
+    id: Address,
+) -> Result<(ObjectReference, Owner), RpcError> {
+    let mut req = GetObjectRequest::new(&id);
+    let mut mask = FieldMaskTree::default();
+    for path in [
+        "object_id",
+        "version",
+        "digest",
+        "owner",
+        "object_type",
+        "has_public_transfer",
+        "contents",
+        "previous_transaction",
+        "storage_rebate",
+    ] {
+        mask.add_field_path(path);
+    }
+    req.read_mask = Some(mask.to_field_mask());
+
+    let resp = client
+        .ledger_client()
+        .get_object(req)
+        .await
+        .map_err(|e| RpcError::Rpc(e.to_string()))?
+        .into_inner();
+
+    let obj_proto = resp.object.ok_or(RpcError::Missing(id))?;
+
+    let proto_ref = obj_proto.object_reference();
+    let reference: ObjectReference = (&proto_ref)
+        .try_into()
+        .map_err(|e: TryFromProtoError| RpcError::Proto(e.to_string()))?;
+
+    let sui_obj: sui_sdk_types::Object = (&obj_proto)
+        .try_into()
+        .map_err(|e: TryFromProtoError| RpcError::Proto(e.to_string()))?;
+
+    Ok((reference, *sui_obj.owner()))
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum OwnerKind {
+    ImmutableOrOwned,
+    SharedLike,
+}
+
+impl OwnerKind {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            OwnerKind::ImmutableOrOwned => "immutable-or-owned",
+            OwnerKind::SharedLike => "shared",
+        }
+    }
+
+    pub(crate) fn is_shared_like(self) -> bool {
+        matches!(self, OwnerKind::SharedLike)
+    }
+}
+
+pub(crate) fn classify_owner(owner: &Owner) -> OwnerKind {
+    match owner {
+        Owner::Shared(_) | Owner::ConsensusAddress { .. } => OwnerKind::SharedLike,
+        Owner::Immutable | Owner::Address(_) | Owner::Object(_) => OwnerKind::ImmutableOrOwned,
+        _ => OwnerKind::SharedLike,
+    }
+}
+
+pub(crate) fn shared_version_from_owner(owner: &Owner) -> Option<u64> {
+    match owner {
+        Owner::Shared(v) => Some(*v),
+        Owner::ConsensusAddress { start_version, .. } => Some(*start_version),
+        _ => None,
+    }
+}
+
+pub(crate) async fn submit_and_wait<S: SuiSigner>(
+    client: &mut sui_rpc::Client,
+    signer: &S,
+    sender: Address,
+    ptb: sui_sdk_types::ProgrammableTransaction,
+    opts: TxOptions,
+    default_gas_budget: u64,
+    timeout: Duration,
+) -> Result<Receipt, TxError> {
+    let sponsor = opts.sponsor.unwrap_or(sender);
+    let gas_price = match opts.gas_price {
+        Some(p) => p,
+        None => client
+            .get_reference_gas_price()
+            .await
+            .map_err(|e| TxError::Execute(e.to_string()))?,
+    };
+
+    let gas = match opts.gas {
+        Some(g) => g,
+        None => select_gas_coin(client, &sponsor).await?,
+    };
+
+    let gas_budget = opts.gas_budget.unwrap_or(default_gas_budget);
+
+    let tx = SdkTransaction {
+        kind: TransactionKind::ProgrammableTransaction(ptb),
+        sender,
+        gas_payment: GasPayment {
+            objects: vec![gas],
+            owner: sponsor,
+            price: gas_price,
+            budget: gas_budget,
+        },
+        expiration: opts.expiration.unwrap_or(TransactionExpiration::None),
+    };
+
+    let signature = signer
+        .sign_transaction(&tx)
+        .map_err(|e| TxError::Sign(e.to_string()))?;
+
+    let mut req = ExecuteTransactionRequest::default();
+    req.transaction = Some(tx.clone().into());
+    req.signatures.push(signature.clone().into());
+    // We need `effects.bcs` in order to decode `sui_sdk_types::TransactionEffects`.
+    //
+    // If no mask is provided, the server defaults to `effects.status,checkpoint` which does not
+    // include the BCS bytes.
+    let mut mask = FieldMaskTree::default();
+    for path in ["digest", "effects.bcs"] {
+        mask.add_field_path(path);
+    }
+    req.read_mask = Some(mask.to_field_mask());
+
+    let executed = client
+        .execute_transaction_and_wait_for_checkpoint(req, timeout)
+        .await
+        .map_err(|e| map_execute_wait_error(e, "execute_transaction_and_wait_for_checkpoint"))?
+        .into_inner()
+        .transaction
+        .ok_or(TxError::MissingExecuted)?;
+
+    let digest = executed
+        .digest
+        .as_deref()
+        .and_then(|d| d.parse::<Digest>().ok())
+        .unwrap_or_else(|| tx.digest());
+
+    let effects = executed
+        .effects
+        .as_ref()
+        .map(TransactionEffects::try_from)
+        .transpose()
+        .map_err(|e: TryFromProtoError| TxError::Proto(e.to_string()))?;
+
+    Ok(Receipt {
+        digest,
+        effects,
+        signature,
+    })
+}
+
+async fn select_gas_coin(
+    client: &mut sui_rpc::Client,
+    owner: &Address,
+) -> Result<ObjectReference, TxError> {
+    let gas_tag = TypeTag::Struct(Box::new(StructTag::gas_coin()));
+    let mut coins = client
+        .select_up_to_n_largest_coins(owner, &gas_tag, 1, &[])
+        .await
+        .map_err(|e| TxError::Gas(e.to_string()))?;
+
+    let coin = coins
+        .pop()
+        .ok_or_else(|| TxError::Gas(format!("no gas coin available for {}", owner)))?;
+
+    let proto_ref = coin.object_reference();
+    (&proto_ref)
+        .try_into()
+        .map_err(|e: TryFromProtoError| TxError::Proto(e.to_string()))
+}
+
+fn map_execute_wait_error(err: ExecuteAndWaitError, context_label: &'static str) -> TxError {
+    match err {
+        ExecuteAndWaitError::RpcError(e) => {
+            TxError::Execute(format!("{context_label} rpc error: {e}"))
+        }
+        ExecuteAndWaitError::ProtoConversionError(e) => {
+            TxError::Proto(format!("{context_label} proto conversion error: {e}"))
+        }
+        ExecuteAndWaitError::MissingTransaction => {
+            TxError::Execute(format!("{context_label} missing transaction in request"))
+        }
+        ExecuteAndWaitError::CheckpointTimeout(_) => {
+            TxError::Execute(format!("{context_label} timed out waiting for checkpoint"))
+        }
+        ExecuteAndWaitError::CheckpointStreamError { error, .. } => {
+            TxError::Execute(format!("{context_label} checkpoint stream error: {error}"))
+        }
+        _ => TxError::Execute(format!("{context_label} unexpected error")),
+    }
+}
+
+pub(crate) async fn simulate_ptb(
+    client: &mut sui_rpc::Client,
+    sender: Address,
+    ptb: sui_sdk_types::ProgrammableTransaction,
+    opts: SimulateOptions,
+) -> Result<SimulationReceipt, SimulateError> {
+    let tx = proto_transaction_for_ptb(sender, ptb);
+
+    let mut req = SimulateTransactionRequest::new(tx);
+    req.checks = Some(TransactionChecks::Enabled as i32);
+    req.do_gas_selection = Some(opts.do_gas_selection);
+
+    let mut mask = FieldMaskTree::default();
+    for path in ["transaction.digest", "transaction.effects.bcs"] {
+        mask.add_field_path(path);
+    }
+    req.read_mask = Some(mask.to_field_mask());
+
+    let resp = client
+        .execution_client()
+        .simulate_transaction(req)
+        .await
+        .map_err(|e| SimulateError::Rpc(e.to_string()))?
+        .into_inner();
+
+    simulation_receipt_from_response(resp)
+}
+
+pub(crate) async fn inspect_ptb(
+    client: &mut sui_rpc::Client,
+    sender: Address,
+    ptb: sui_sdk_types::ProgrammableTransaction,
+    _opts: InspectOptions,
+) -> Result<InspectReceipt, SimulateError> {
+    let tx = proto_transaction_for_ptb(sender, ptb);
+
+    let mut req = SimulateTransactionRequest::new(tx);
+    req.checks = Some(TransactionChecks::Disabled as i32);
+
+    let mut mask = FieldMaskTree::default();
+    for path in [
+        "transaction.digest",
+        "transaction.effects.bcs",
+        "command_outputs.return_values.value",
+        "command_outputs.mutated_by_ref.value",
+    ] {
+        mask.add_field_path(path);
+    }
+    req.read_mask = Some(mask.to_field_mask());
+
+    let resp = client
+        .execution_client()
+        .simulate_transaction(req)
+        .await
+        .map_err(|e| SimulateError::Rpc(e.to_string()))?
+        .into_inner();
+
+    inspect_receipt_from_response(resp)
+}
+
+fn proto_transaction_for_ptb(
+    sender: Address,
+    ptb: sui_sdk_types::ProgrammableTransaction,
+) -> ProtoTransaction {
+    let ptb_proto: ProtoProgrammableTransaction = ptb.into();
+    let mut kind = ProtoTransactionKind::default();
+    kind.kind = Some(transaction_kind::Kind::ProgrammableTransaction as i32);
+    kind.data = Some(transaction_kind::Data::ProgrammableTransaction(ptb_proto));
+
+    let mut tx = ProtoTransaction::default();
+    tx.kind = Some(kind);
+    tx.sender = Some(sender.to_string());
+    tx
+}
+
+fn simulation_receipt_from_response(
+    resp: SimulateTransactionResponse,
+) -> Result<SimulationReceipt, SimulateError> {
+    let executed = resp.transaction.ok_or(SimulateError::MissingExecuted)?;
+
+    let (digest, effects) = decode_executed(&executed)?;
+    Ok(SimulationReceipt { digest, effects })
+}
+
+fn inspect_receipt_from_response(
+    resp: SimulateTransactionResponse,
+) -> Result<InspectReceipt, SimulateError> {
+    let executed = resp.transaction.ok_or(SimulateError::MissingExecuted)?;
+
+    let (digest, effects) = decode_executed(&executed)?;
+
+    let outputs = resp
+        .command_outputs
+        .into_iter()
+        .map(|command| CommandOutputs {
+            return_values: command
+                .return_values
+                .into_iter()
+                .filter_map(bcs_value_from_command_output)
+                .collect(),
+            mutated_by_ref: command
+                .mutated_by_ref
+                .into_iter()
+                .filter_map(bcs_value_from_command_output)
+                .collect(),
+        })
+        .collect();
+
+    Ok(InspectReceipt {
+        digest,
+        effects,
+        outputs,
+    })
+}
+
+fn decode_executed(
+    executed: &sui_rpc::proto::sui::rpc::v2::ExecutedTransaction,
+) -> Result<(Option<Digest>, Option<TransactionEffects>), SimulateError> {
+    let digest = executed
+        .digest
+        .as_deref()
+        .and_then(|d| d.parse::<Digest>().ok());
+
+    let effects = executed
+        .effects
+        .as_ref()
+        .map(TransactionEffects::try_from)
+        .transpose()
+        .map_err(|e: TryFromProtoError| SimulateError::Proto(e.to_string()))?;
+
+    Ok((digest, effects))
+}
+
+fn bcs_value_from_command_output(
+    output: sui_rpc::proto::sui::rpc::v2::CommandOutput,
+) -> Option<BcsValue> {
+    let bcs = output.value?;
+    Some(BcsValue {
+        name: bcs.name,
+        bytes: bcs.value.map(|bytes| bytes.to_vec()).unwrap_or_default(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simulate_receipt_decodes_effects() {
+        let effects = TransactionEffects::V2(Box::new(sui_sdk_types::TransactionEffectsV2 {
+            status: sui_sdk_types::ExecutionStatus::Success,
+            epoch: 0,
+            gas_used: sui_sdk_types::GasCostSummary::new(0, 0, 0, 0),
+            transaction_digest: Digest::default(),
+            gas_object_index: None,
+            events_digest: None,
+            dependencies: vec![],
+            lamport_version: 1,
+            changed_objects: vec![],
+            unchanged_consensus_objects: vec![],
+            auxiliary_data_digest: None,
+        }));
+
+        let bcs = sui_rpc::proto::sui::rpc::v2::Bcs::serialize(&effects).unwrap();
+        let mut proto_effects = sui_rpc::proto::sui::rpc::v2::TransactionEffects::default();
+        proto_effects.bcs = Some(bcs);
+
+        let mut executed = sui_rpc::proto::sui::rpc::v2::ExecutedTransaction::default();
+        executed.digest = Some(Digest::default().to_string());
+        executed.effects = Some(proto_effects);
+
+        let mut resp = SimulateTransactionResponse::default();
+        resp.transaction = Some(executed);
+
+        let receipt = simulation_receipt_from_response(resp).unwrap();
+        assert_eq!(receipt.digest, Some(Digest::default()));
+        assert!(receipt.effects.is_some());
+    }
+
+    #[test]
+    fn inspect_receipt_extracts_command_outputs() {
+        let executed = sui_rpc::proto::sui::rpc::v2::ExecutedTransaction::default();
+
+        let mut value = sui_rpc::proto::sui::rpc::v2::Bcs::default();
+        value.name = Some("u64".to_owned());
+        value.value = Some(10u64.to_le_bytes().to_vec().into());
+
+        let mut out = sui_rpc::proto::sui::rpc::v2::CommandOutput::default();
+        out.value = Some(value);
+
+        let mut cmd = sui_rpc::proto::sui::rpc::v2::CommandResult::default();
+        cmd.return_values = vec![out];
+
+        let mut resp = SimulateTransactionResponse::default();
+        resp.transaction = Some(executed);
+        resp.command_outputs = vec![cmd];
+
+        let receipt = inspect_receipt_from_response(resp).unwrap();
+        assert_eq!(receipt.outputs.len(), 1);
+        assert_eq!(receipt.outputs[0].return_values.len(), 1);
+        assert_eq!(
+            receipt.outputs[0].return_values[0].name.as_deref(),
+            Some("u64")
+        );
+        assert_eq!(
+            receipt.outputs[0].return_values[0].bytes,
+            10u64.to_le_bytes().to_vec()
+        );
+    }
+}
