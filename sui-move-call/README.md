@@ -17,6 +17,7 @@ out of scope here.
 - `CallSpec`: `(package, module, function)` + type arguments + call arguments
 - `CallArg`: canonical call-argument representation (re-export of `sui_sdk_types::Input`)
 - `ToCallArg`: convert values into `CallArg` without consuming them
+- `ObjectArg<T>`: marker trait for typed object arguments across input kinds
 - `MoveObject<T>`: typed handle for `Input::ImmutableOrOwned(ObjectReference)`
 - `SharedMoveObject<T>`: typed handle for `Input::Shared(SharedInput)`
 - `ReceivingMoveObject<T>`: typed handle for `Input::Receiving(ObjectReference)`
@@ -36,6 +37,18 @@ immutable/owned and receiving inputs use full `ObjectReference`s.
 
 If you need an input kind that doesn't have a typed wrapper here (for example
 `CallArg::FundsWithdrawal(..)`), use `CallSpec::push_input`.
+
+## `ObjectArg<T>` (why it exists)
+
+Sui has multiple object input kinds (owned/immutable vs shared vs receiving), but you often want to
+write interface functions that are typed over the *Move* object type `T` and accept any of those
+kinds.
+
+`ObjectArg<T>` is a tiny marker trait that keeps the type `T` in the function signature while
+remaining agnostic about which concrete object-handle wrapper the caller has.
+
+It is especially useful for code generation: generated call stubs can accept `&impl ObjectArg<T>`
+to preserve type inference for generic object types.
 
 ## Example: a typed interface function
 

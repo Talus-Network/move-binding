@@ -230,6 +230,42 @@ pub trait ToCallArg {
     fn to_call_arg(&self) -> Result<CallArg, CallArgError>;
 }
 
+/// Typed object argument for a Move `key` type.
+///
+/// This is a tiny marker trait used to preserve the Move type `T` at the Rust type level while
+/// staying agnostic over Sui's concrete object input kind (immutable/owned vs shared vs
+/// receiving).
+///
+/// It is implemented by the typed object-handle wrappers in this crate:
+/// - [`MoveObject<T>`] (`Input::ImmutableOrOwned`)
+/// - [`SharedMoveObject<T>`] (`Input::Shared`)
+/// - [`ReceivingMoveObject<T>`] (`Input::Receiving`)
+///
+/// Higher layers (like `sui-move-runtime`) can implement it for their own handle types.
+///
+/// This trait is especially useful for code generation: generated bindings can accept
+/// `&impl ObjectArg<MyType>` to enable type inference for generic object types, while remaining
+/// compatible with multiple runtime layers.
+///
+/// # Example
+/// ```
+/// use sui_move_call::{CallSpec, ObjectArg, ToCallArg};
+/// use sui_sdk_types::Address;
+///
+/// #[sui_move::move_struct(address = "0x1", module = "m", abilities = "key")]
+/// struct S {
+///     id: sui_move::types::UID,
+/// }
+///
+/// fn touch(obj: &impl ObjectArg<S>) -> CallSpec {
+///     let package: Address = "0x1".parse().unwrap();
+///     let mut spec = CallSpec::new(package, "m", "touch").unwrap();
+///     spec.push_input(obj.to_call_arg().unwrap());
+///     spec
+/// }
+/// ```
+pub trait ObjectArg<T: MoveStruct + HasKey>: ToCallArg {}
+
 impl<T: MoveType> ToCallArg for T {
     fn to_call_arg(&self) -> Result<CallArg, CallArgError> {
         Ok(CallArg::Pure(self.to_bcs()?))
@@ -242,17 +278,23 @@ impl<T: MoveStruct + HasKey> ToCallArg for MoveObject<T> {
     }
 }
 
+impl<T: MoveStruct + HasKey> ObjectArg<T> for MoveObject<T> {}
+
 impl<T: MoveStruct + HasKey> ToCallArg for SharedMoveObject<T> {
     fn to_call_arg(&self) -> Result<CallArg, CallArgError> {
         Ok(CallArg::Shared(self.input.clone()))
     }
 }
 
+impl<T: MoveStruct + HasKey> ObjectArg<T> for SharedMoveObject<T> {}
+
 impl<T: MoveStruct + HasKey> ToCallArg for ReceivingMoveObject<T> {
     fn to_call_arg(&self) -> Result<CallArg, CallArgError> {
         Ok(CallArg::Receiving(self.reference().clone()))
     }
 }
+
+impl<T: MoveStruct + HasKey> ObjectArg<T> for ReceivingMoveObject<T> {}
 
 /// Errors that can occur when constructing a `CallSpec`.
 #[derive(thiserror::Error, Debug)]
@@ -354,7 +396,7 @@ impl CallSpec {
 /// Convenience re-exports for downstream code.
 pub mod prelude {
     pub use crate::{
-        CallArg, CallArgError, CallSpec, CallSpecError, MoveObject, ReceivingMoveObject,
+        CallArg, CallArgError, CallSpec, CallSpecError, MoveObject, ObjectArg, ReceivingMoveObject,
         SharedMoveObject, ToCallArg,
     };
     pub use sui_move::prelude::*;

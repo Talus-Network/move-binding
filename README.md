@@ -18,9 +18,13 @@ and higher layers build on lower ones.
 - `sui-move-runtime`: a “Rust-time vs Move-time” runtime for commit/simulate/inspect of PTBs and
   auto-updating runtime-owned object handles from transaction effects.
   See `sui-move-runtime/README.md`.
+- `sui-move-codegen`: generate typed Rust bindings (types + `CallSpec` builders) from on-chain Move
+  package metadata.
+  See `sui-move-codegen/README.md`.
 
 ## Where to start
 
 - Application code: start at `sui-move-runtime/README.md`.
 - Interface crates (module/function wrappers): start at `sui-move-call/README.md`.
 - Pure type modeling/decoding: start at `sui-move/README.md`.
+- Generating bindings from on-chain metadata: start at `sui-move-codegen/README.md`.

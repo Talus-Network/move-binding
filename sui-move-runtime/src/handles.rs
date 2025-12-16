@@ -111,6 +111,8 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for Object<T> {
     }
 }
 
+impl<T: sui_move::MoveStruct + sui_move::HasKey> sui_move_call::ObjectArg<T> for Object<T> {}
+
 /// Runtime-owned handle for a receiving object input.
 ///
 /// This is the runtime-owned counterpart of Sui's `Input::Receiving`.
@@ -156,6 +158,11 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for ReceivingObject<T
     fn to_call_arg(&self) -> Result<CallArg, sui_move_call::CallArgError> {
         Ok(CallArg::Receiving(self.reference()))
     }
+}
+
+impl<T: sui_move::MoveStruct + sui_move::HasKey> sui_move_call::ObjectArg<T>
+    for ReceivingObject<T>
+{
 }
 
 /// Typed handle for a shared object input.
@@ -250,6 +257,8 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for SharedObject<T> {
         Ok(CallArg::Shared(self.input.clone()))
     }
 }
+
+impl<T: sui_move::MoveStruct + sui_move::HasKey> sui_move_call::ObjectArg<T> for SharedObject<T> {}
 
 /// Convenience wrapper for “some object” whose on-chain ownership might be owned/immutable or shared.
 ///
@@ -390,6 +399,8 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for AnyObject<T> {
         }
     }
 }
+
+impl<T: sui_move::MoveStruct + sui_move::HasKey> sui_move_call::ObjectArg<T> for AnyObject<T> {}
 
 #[derive(Default, Debug)]
 pub(crate) struct Registry {
