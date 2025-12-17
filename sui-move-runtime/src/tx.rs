@@ -235,38 +235,56 @@ pub(crate) async fn fetch_object_reference_and_owner(
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum OwnerKind {
-    ImmutableOrOwned,
-    SharedLike,
+    Immutable,
+    AddressOwned,
+    ChildObject,
+    Shared { initial_shared_version: u64 },
+    ConsensusAddress { start_version: u64 },
     Unknown,
 }
 
 impl OwnerKind {
     pub(crate) fn label(self) -> &'static str {
         match self {
-            OwnerKind::ImmutableOrOwned => "immutable-or-owned",
-            OwnerKind::SharedLike => "shared",
+            OwnerKind::Immutable => "immutable",
+            OwnerKind::AddressOwned => "address-owned",
+            OwnerKind::ChildObject => "child-object",
+            OwnerKind::Shared { .. } => "shared",
+            OwnerKind::ConsensusAddress { .. } => "consensus-address-owned",
             OwnerKind::Unknown => "unknown",
         }
     }
 
     pub(crate) fn is_shared_like(self) -> bool {
-        matches!(self, OwnerKind::SharedLike | OwnerKind::Unknown)
+        matches!(
+            self,
+            OwnerKind::Shared { .. } | OwnerKind::ConsensusAddress { .. }
+        )
+    }
+
+    pub(crate) fn shared_start_version(self) -> Option<u64> {
+        match self {
+            OwnerKind::Shared {
+                initial_shared_version,
+            } => Some(initial_shared_version),
+            OwnerKind::ConsensusAddress { start_version, .. } => Some(start_version),
+            _ => None,
+        }
     }
 }
 
 pub(crate) fn classify_owner(owner: &Owner) -> OwnerKind {
     match owner {
-        Owner::Shared(_) | Owner::ConsensusAddress { .. } => OwnerKind::SharedLike,
-        Owner::Immutable | Owner::Address(_) | Owner::Object(_) => OwnerKind::ImmutableOrOwned,
+        Owner::Immutable => OwnerKind::Immutable,
+        Owner::Address(_) => OwnerKind::AddressOwned,
+        Owner::Object(_) => OwnerKind::ChildObject,
+        Owner::Shared(initial_shared_version) => OwnerKind::Shared {
+            initial_shared_version: *initial_shared_version,
+        },
+        Owner::ConsensusAddress { start_version, .. } => OwnerKind::ConsensusAddress {
+            start_version: *start_version,
+        },
         _ => OwnerKind::Unknown,
-    }
-}
-
-pub(crate) fn shared_version_from_owner(owner: &Owner) -> Option<u64> {
-    match owner {
-        Owner::Shared(v) => Some(*v),
-        Owner::ConsensusAddress { start_version, .. } => Some(*start_version),
-        _ => None,
     }
 }
 

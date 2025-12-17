@@ -100,6 +100,9 @@ types (because they have different wire shapes):
 Note: receiving is not an on-chain owner kind. It is an ephemeral per-transaction “receiving
 ticket” consumed by `sui::transfer::receive`/`public_receive`.
 
+Note: Sui also has `Owner::ConsensusAddressOwner` objects. They use the shared-like input shape
+(`start_version` plays the same role as `initial_shared_version`).
+
 This crate mirrors those shapes:
 
 - Use `Read::object::<T>(id)` to get an `Object<T>` for immutable/owned objects.

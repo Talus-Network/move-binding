@@ -172,12 +172,15 @@ impl<'a, S: SuiSigner> Read<'a, S> {
             tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
 
         let kind = tx::classify_owner(&owner);
-        if kind.is_shared_like() {
-            return Err(Error::ObjectKind {
-                object_id,
-                expected: "immutable-or-owned",
-                actual: kind.label(),
-            });
+        match kind {
+            tx::OwnerKind::Immutable | tx::OwnerKind::AddressOwned => {}
+            other => {
+                return Err(Error::ObjectKind {
+                    object_id,
+                    expected: "immutable-or-owned",
+                    actual: other.label(),
+                });
+            }
         }
 
         Ok(self.rt.registry.intern_object::<T>(reference))
@@ -198,11 +201,11 @@ impl<'a, S: SuiSigner> Read<'a, S> {
             tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
 
         match tx::classify_owner(&owner) {
-            tx::OwnerKind::ImmutableOrOwned => Ok(AnyObject::from_object(
+            tx::OwnerKind::Immutable | tx::OwnerKind::AddressOwned => Ok(AnyObject::from_object(
                 self.rt.registry.intern_object::<T>(reference),
             )),
-            tx::OwnerKind::SharedLike => {
-                let Some(initial_shared_version) = tx::shared_version_from_owner(&owner) else {
+            kind if kind.is_shared_like() => {
+                let Some(initial_shared_version) = kind.shared_start_version() else {
                     return Err(Error::ObjectKind {
                         object_id,
                         expected: "shared",
@@ -215,10 +218,10 @@ impl<'a, S: SuiSigner> Read<'a, S> {
                     initial_shared_version,
                 )))
             }
-            tx::OwnerKind::Unknown => Err(Error::ObjectKind {
+            other => Err(Error::ObjectKind {
                 object_id,
                 expected: "immutable-or-owned or shared",
-                actual: "unknown",
+                actual: other.label(),
             }),
         }
     }
@@ -251,11 +254,12 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         let (_reference, owner) =
             tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
 
-        let Some(initial_shared_version) = tx::shared_version_from_owner(&owner) else {
+        let kind = tx::classify_owner(&owner);
+        let Some(initial_shared_version) = kind.shared_start_version() else {
             return Err(Error::ObjectKind {
                 object_id,
                 expected: "shared",
-                actual: tx::classify_owner(&owner).label(),
+                actual: kind.label(),
             });
         };
 
