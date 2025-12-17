@@ -411,11 +411,11 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for SharedObject<T> {
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct Registry {
+pub(crate) struct Cursor {
     objects: Mutex<HashMap<Address, Weak<ObjectCell>>>,
 }
 
-impl Registry {
+impl Cursor {
     pub(crate) fn intern_object<T: sui_move::MoveStruct + sui_move::HasKey>(
         &self,
         reference: ObjectReference,
@@ -443,7 +443,7 @@ impl Registry {
     fn intern_cell(&self, reference: ObjectReference, owner: Owner) -> Arc<ObjectCell> {
         let object_id = *reference.object_id();
 
-        let mut map = self.objects.lock().expect("poisoned registry lock");
+        let mut map = self.objects.lock().expect("poisoned cursor lock");
         if let Some(existing) = map.get(&object_id).and_then(Weak::upgrade) {
             existing.set_reference(reference);
             existing.set_owner(owner);
@@ -456,8 +456,8 @@ impl Registry {
         cell
     }
 
-    pub(crate) fn apply_effects(&self, effects_in: &sui_sdk_types::TransactionEffects) {
-        let patch = effects::EffectsPatch::from_effects(effects_in);
+    pub(crate) fn apply_patch(&self, effects: &sui_sdk_types::TransactionEffects) {
+        let patch = effects::EffectsPatch::from_effects(effects);
         let tombstones: HashMap<Address, effects::TombstoneReason> = patch
             .tombstones
             .into_iter()
@@ -485,7 +485,7 @@ impl Registry {
     }
 
     fn upgrade(&self, object_id: Address) -> Option<Arc<ObjectCell>> {
-        let mut map = self.objects.lock().expect("poisoned registry lock");
+        let mut map = self.objects.lock().expect("poisoned cursor lock");
         let weak = map.get(&object_id).cloned()?;
 
         match weak.upgrade() {
@@ -512,14 +512,14 @@ mod tests {
     }
 
     #[test]
-    fn registry_interns_cells_by_object_id() {
+    fn cursor_interns_cells_by_object_id() {
         let id = Address::from_hex("0x2").unwrap();
         let a = ObjectReference::new(id, 1, Digest::default());
         let b = ObjectReference::new(id, 2, Digest::default());
 
-        let registry = Registry::default();
-        let obj_a: Object<Demo> = registry.intern_object(a, Owner::Immutable);
-        let obj_b: Object<Demo> = registry.intern_object(b, Owner::Immutable);
+        let cursor = Cursor::default();
+        let obj_a: Object<Demo> = cursor.intern_object(a, Owner::Immutable);
+        let obj_b: Object<Demo> = cursor.intern_object(b, Owner::Immutable);
 
         assert_eq!(obj_a.object_id(), id);
         assert_eq!(obj_b.object_id(), id);
@@ -528,12 +528,12 @@ mod tests {
     }
 
     #[test]
-    fn apply_effects_updates_live_handles() {
+    fn apply_patch_updates_live_handles() {
         let id = Address::from_hex("0x2").unwrap();
         let old = ObjectReference::new(id, 1, Digest::default());
 
-        let registry = Registry::default();
-        let obj: Object<Demo> = registry.intern_object(old, Owner::Immutable);
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(old, Owner::Immutable);
         assert_eq!(obj.reference().version(), 1);
 
         let effects = TransactionEffects::V2(Box::new(TransactionEffectsV2 {
@@ -562,7 +562,7 @@ mod tests {
             auxiliary_data_digest: None,
         }));
 
-        registry.apply_effects(&effects);
+        cursor.apply_patch(&effects);
         assert_eq!(obj.reference().version(), 7);
     }
 
@@ -571,8 +571,8 @@ mod tests {
         let id = Address::from_hex("0x2").unwrap();
         let reference = ObjectReference::new(id, 1, Digest::default());
 
-        let registry = Registry::default();
-        let obj: Object<Demo> = registry.intern_object(reference, Owner::Shared(7));
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(reference, Owner::Shared(7));
 
         let arg = obj.to_call_arg().unwrap();
         let CallArg::Shared(shared) = arg else {
@@ -589,8 +589,8 @@ mod tests {
         let id = Address::from_hex("0x2").unwrap();
         let reference = ObjectReference::new(id, 1, Digest::default());
 
-        let registry = Registry::default();
-        let obj: Object<Demo> = registry.intern_object(reference, Owner::Immutable);
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(reference, Owner::Immutable);
 
         let effects = TransactionEffects::V2(Box::new(TransactionEffectsV2 {
             status: ExecutionStatus::Success,
@@ -615,7 +615,7 @@ mod tests {
             auxiliary_data_digest: None,
         }));
 
-        registry.apply_effects(&effects);
+        cursor.apply_patch(&effects);
         let err = obj.to_call_arg().unwrap_err();
 
         match err {
@@ -633,8 +633,8 @@ mod tests {
         let parent = Address::from_hex("0x3").unwrap();
         let reference = ObjectReference::new(id, 1, Digest::default());
 
-        let registry = Registry::default();
-        let obj: Object<Demo> = registry.intern_object(reference, Owner::Object(parent));
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(reference, Owner::Object(parent));
 
         let err = obj.to_call_arg().unwrap_err();
         match err {
@@ -656,8 +656,8 @@ mod tests {
         let id = Address::from_hex("0x2").unwrap();
         let reference = ObjectReference::new(id, 1, Digest::default());
 
-        let registry = Registry::default();
-        let obj: Object<Demo> = registry.intern_object(reference, Owner::Shared(7));
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(reference, Owner::Shared(7));
 
         let shared_mut = obj.shared_mutable().unwrap();
         let CallArg::Shared(shared) = shared_mut.to_call_arg().unwrap() else {
@@ -674,14 +674,14 @@ mod tests {
         let owner = Address::from_hex("0x3").unwrap();
         let reference = ObjectReference::new(id, 1, Digest::default());
 
-        let registry = Registry::default();
-        let obj: Object<Demo> = registry.intern_object(reference.clone(), Owner::Address(owner));
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(reference.clone(), Owner::Address(owner));
 
         let recv = obj.receiving().unwrap();
         let arg = recv.to_call_arg().unwrap();
         assert_eq!(arg, CallArg::Receiving(reference.clone()));
 
-        let obj: Object<Demo> = registry.intern_object(reference.clone(), Owner::Shared(7));
+        let obj: Object<Demo> = cursor.intern_object(reference.clone(), Owner::Shared(7));
         let err = obj.receiving().unwrap_err();
         match err {
             sui_move_call::CallArgError::ObjectKind {
@@ -698,12 +698,12 @@ mod tests {
     }
 
     #[test]
-    fn apply_effects_tombstones_deleted_objects() {
+    fn apply_patch_tombstones_deleted_objects() {
         let id = Address::from_hex("0x2").unwrap();
         let old = ObjectReference::new(id, 1, Digest::default());
 
-        let registry = Registry::default();
-        let obj: Object<Demo> = registry.intern_object(old, Owner::Immutable);
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(old, Owner::Immutable);
         assert_eq!(obj.cell.tombstone_reason(), None);
 
         let effects = TransactionEffects::V2(Box::new(TransactionEffectsV2 {
@@ -729,7 +729,7 @@ mod tests {
             auxiliary_data_digest: None,
         }));
 
-        registry.apply_effects(&effects);
+        cursor.apply_patch(&effects);
         assert_eq!(
             obj.cell.tombstone_reason(),
             Some(effects::TombstoneReason::NotExist)

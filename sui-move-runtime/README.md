@@ -75,7 +75,7 @@ async fn demo() -> Result<(), Error> {
 ## Core API
 
 - Runtime views:
-  - `Runtime`: owns RPC client, signer, and the handle registry
+  - `Runtime`: owns RPC client, signer, and the handle cursor
   - `Read`: read view (fetch typed handles)
   - `Tx`: transaction view (simulate/inspect/commit PTBs)
 - Handles (all implement `ToCallArg`):
@@ -207,15 +207,16 @@ manually is annoying and tends to leak plumbing into user code.
 This crate makes handles *runtime-owned*:
 
 - `Read::object`/`Read::receiving_object` fetch the current `ObjectReference` and **intern** it in
-  a registry keyed by `object_id`.
+  a cursor (your local frontier) keyed by `object_id`.
 - The returned `Object<T>` / `ReceivingObject<T>` is a small `Clone` handle backed by `Arc<RwLock<...>>`.
 - `Tx::commit` requests `effects.bcs` from RPC, decodes `TransactionEffects`, extracts updated
-  references, and updates any live handle cells that match those object ids.
+  object information, derives an effects-based patch, and applies it to the cursor, updating any
+  live handle cells that match those object ids.
 
 Consequences:
 
 - Clones of the same handle stay in sync (they share the same cell).
-- Only commits performed through the same `Runtime` update the registry.
+- Only commits performed through the same `Runtime` advance the cursor.
 - `simulate`/`inspect` never update handles (they do not mutate the chain).
 
 ### Storing handles in Rust structs

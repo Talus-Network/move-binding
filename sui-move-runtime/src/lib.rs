@@ -53,7 +53,7 @@ pub enum Error {
     },
 }
 
-/// Long-lived runtime owning RPC + signer + handle registry.
+/// Long-lived runtime owning RPC + signer + handle cursor.
 ///
 /// This is the entry point for the Read → Tx → Commit mental model:
 /// - [`Runtime::read`] for fetching/constructing typed handles
@@ -62,11 +62,12 @@ pub enum Error {
 /// # Runtime-owned handles
 ///
 /// Handles returned by [`Read::object`] and [`Read::receiving_object`] are **interned** in the
-/// runtime by `object_id`. Clones of the same handle share the same internal cell, so they all see
-/// updates.
+/// runtime’s cursor (your local frontier) by `object_id`. Clones of the same handle share the same
+/// internal cell, so they all see updates.
 ///
-/// After [`Tx::commit`], the runtime decodes `TransactionEffects` from RPC and updates any live
-/// handle cells whose object id appears in the effects.
+/// After [`Tx::commit`], the runtime decodes `TransactionEffects` from RPC, derives an
+/// effects-based patch, and applies it to the cursor, updating any live handle cells whose object
+/// id appears in the effects.
 ///
 /// This is the core ergonomic win: you can store typed handles in normal Rust structs without
 /// threading `&mut` everywhere just to keep `ObjectReference`s current.
@@ -95,7 +96,7 @@ pub enum Error {
 pub struct Runtime<S> {
     client: sui_rpc::Client,
     signer: S,
-    registry: handles::Registry,
+    cursor: handles::Cursor,
     wait_timeout: Duration,
     default_gas_budget: u64,
 }
@@ -106,7 +107,7 @@ impl<S: SuiSigner> Runtime<S> {
         Self {
             client,
             signer,
-            registry: handles::Registry::default(),
+            cursor: handles::Cursor::default(),
             wait_timeout: Duration::from_secs(30),
             default_gas_budget: 2_000_000,
         }
@@ -139,8 +140,8 @@ impl<S: SuiSigner> Runtime<S> {
         Tx { rt: self, sender }
     }
 
-    fn apply_effects(&self, effects: &TransactionEffects) {
-        self.registry.apply_effects(effects);
+    fn apply_patch(&self, effects: &TransactionEffects) {
+        self.cursor.apply_patch(effects);
     }
 }
 
@@ -187,7 +188,7 @@ impl<'a, S: SuiSigner> Read<'a, S> {
             }
         }
 
-        Ok(self.rt.registry.intern_object::<T>(reference, owner))
+        Ok(self.rt.cursor.intern_object::<T>(reference, owner))
     }
 
     /// Construct a receiving object handle by fetching the latest `ObjectReference`.
@@ -206,7 +207,7 @@ impl<'a, S: SuiSigner> Read<'a, S> {
             tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
         Ok(self
             .rt
-            .registry
+            .cursor
             .intern_receiving_object::<T>(reference, owner))
     }
 
@@ -263,7 +264,7 @@ pub struct Tx<'a, S> {
 impl<'a, S: SuiSigner> Tx<'a, S> {
     /// Commit a pre-built PTB and wait for checkpoint inclusion.
     ///
-    /// On success, the runtime applies the returned transaction effects to its registry, updating
+    /// On success, the runtime applies an effects-derived patch to its cursor, updating
     /// all live [`Object`] and [`ReceivingObject`] handles that match changed objects.
     pub async fn commit(self, ptb: ProgrammableTransaction) -> Result<Receipt, Error> {
         self.commit_with(ptb, TxOptions::default()).await
@@ -323,7 +324,7 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
         .await?;
 
         if let Some(effects) = &receipt.effects {
-            self.rt.apply_effects(effects);
+            self.rt.apply_patch(effects);
         }
 
         Ok(receipt)
