@@ -136,6 +136,8 @@ All transaction actions take a sender address, and all operate on a PTB:
 
 - `commit`: builds a full `Transaction`, signs it, submits it, and waits for checkpoint inclusion.
   It requests `effects.bcs` so the runtime can decode `TransactionEffects` and refresh handles.
+  If checkpoint waiting times out (or the checkpoint stream errors), `commit` still returns a
+  `Receipt` with `digest` + any decoded effects, and marks the finality as observed `Executed`.
 - `simulate`: calls `simulate_transaction` with checks enabled. No signature is required and the
   chain is not mutated. Handles are not updated.
 - `inspect`: calls `simulate_transaction` with checks disabled and asks RPC for

@@ -8,8 +8,8 @@ mod tx;
 pub use crate::effects::TombstoneReason;
 pub use crate::handles::{CursorSnapshot, Object, ReceivingObject, SharedObject};
 pub use crate::tx::{
-    BcsValue, CommandOutputs, InspectOptions, InspectReceipt, Receipt, SimulateOptions,
-    SimulationReceipt, TxOptions,
+    BcsValue, CheckpointWaitOutcome, CommandOutputs, EnsureSuccessError, Finality, InspectOptions,
+    InspectReceipt, ObservedFinality, Receipt, SimulateOptions, SimulationReceipt, TxOptions,
 };
 
 use std::time::Duration;
@@ -304,6 +304,10 @@ pub struct Tx<'a, S> {
 impl<'a, S: SuiSigner> Tx<'a, S> {
     /// Commit a pre-built PTB and wait for checkpoint inclusion.
     ///
+    /// If checkpoint waiting times out (or the checkpoint stream errors), this still returns a
+    /// [`Receipt`] with `digest` and any decoded effects, and marks the observed finality as
+    /// `Executed`.
+    ///
     /// On success, the runtime applies an effects-derived patch to its cursor, updating
     /// all live [`Object`] and [`ReceivingObject`] handles that match changed objects.
     pub async fn commit(self, ptb: ProgrammableTransaction) -> Result<Receipt, Error> {
@@ -379,8 +383,9 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
 /// - `sui-move-ptb` prelude (PTB building)
 pub mod prelude {
     pub use crate::{
-        BcsValue, CommandOutputs, CursorSnapshot, Error, InspectOptions, InspectReceipt, Object,
-        Read, Receipt, ReceivingObject, Runtime, SharedObject, SimulateOptions, SimulationReceipt,
+        BcsValue, CheckpointWaitOutcome, CommandOutputs, CursorSnapshot, EnsureSuccessError, Error,
+        Finality, InspectOptions, InspectReceipt, Object, ObservedFinality, Read, Receipt,
+        ReceivingObject, Runtime, SharedObject, SimulateOptions, SimulationReceipt,
         TombstoneReason, Tx, TxOptions,
     };
     pub use sui_move_call::prelude::*;
