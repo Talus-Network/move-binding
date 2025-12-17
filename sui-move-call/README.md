@@ -21,6 +21,15 @@ out of scope here.
 - `SharedMoveObject<T>`: typed handle for `Input::Shared(SharedInput)`
 - `ReceivingMoveObject<T>`: typed handle for `Input::Receiving(ObjectReference)`
 
+## Receiving is an input mode (not ownership)
+
+Sui's “receiving” is a distinct **transaction input mode**. It corresponds to the Move framework
+type `sui::transfer::Receiving<T>`: an ephemeral per-transaction “receiving ticket” consumed by
+`sui::transfer::receive`/`public_receive`.
+
+It is not an on-chain owner kind, and this crate does not attempt to prove that a given reference
+is valid to receive. It only models the correct wire shape (`Input::Receiving(ObjectReference)`).
+
 ## Argument mapping
 
 This crate keeps the user-facing API small, and maps typed values into Sui's on-chain input kinds:

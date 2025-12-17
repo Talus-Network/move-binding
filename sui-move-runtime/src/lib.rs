@@ -226,6 +226,11 @@ impl<'a, S: SuiSigner> Read<'a, S> {
     /// Construct a receiving object handle by fetching the latest `ObjectReference`.
     ///
     /// This corresponds to Sui's `Input::Receiving`.
+    ///
+    /// Receiving is a transaction input mode (the Move framework type
+    /// `sui::transfer::Receiving<T>`), not an on-chain owner kind. This helper only fetches the
+    /// latest reference and does not validate that the object is valid to receive in the current
+    /// transaction.
     pub async fn receiving_object<T: sui_move::MoveStruct + sui_move::HasKey>(
         &mut self,
         object_id: Address,

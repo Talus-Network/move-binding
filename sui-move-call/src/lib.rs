@@ -153,8 +153,14 @@ impl<T: MoveStruct + HasKey> SharedMoveObject<T> {
 
 /// Typed handle for a "receiving" object argument.
 ///
-/// Receiving objects are passed as an [`ObjectReference`], but their semantics differ from normal
-/// immutable-or-owned object inputs.
+/// This corresponds to Sui's `Input::Receiving(ObjectReference)`.
+///
+/// Receiving is a **transaction input mode**, not an on-chain owner kind. It is used for the Move
+/// framework concept `sui::transfer::Receiving<T>`: an ephemeral per-transaction “receiving
+/// ticket” that can be consumed by `sui::transfer::receive`/`public_receive`.
+///
+/// This wrapper does not validate whether the referenced object can be received in the current
+/// transaction; invalid uses are rejected by Sui.
 ///
 /// # Example
 /// ```

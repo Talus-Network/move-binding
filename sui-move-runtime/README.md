@@ -57,7 +57,7 @@ async fn demo() -> Result<(), Error> {
     let ptb = sui_move_ptb::ptb! { touch_coin(&coin, 10); }?;
     let _sim = rt.tx(sender).simulate(ptb).await?;
 
-    // Tx: debug (checks disabled, returns per-command outputs).
+    // Tx: inspect (checks disabled, returns per-command outputs).
     let ptb = sui_move_ptb::ptb! { touch_coin(&coin, 10); }?;
     let _dbg = rt.tx(sender).inspect(ptb).await?;
 
@@ -95,7 +95,10 @@ types (because they have different wire shapes):
 
 - Immutable/owned: `Input::ImmutableOrOwned(ObjectReference)`
 - Shared: `Input::Shared(SharedInput)` (uses `initial_shared_version` + mutability)
-- Receiving: `Input::Receiving(ObjectReference)`
+- Receiving: `Input::Receiving(ObjectReference)` (transaction input mode for `sui::transfer::Receiving<T>`)
+
+Note: receiving is not an on-chain owner kind. It is an ephemeral per-transaction “receiving
+ticket” consumed by `sui::transfer::receive`/`public_receive`.
 
 This crate mirrors those shapes:
 
@@ -115,7 +118,7 @@ All transaction actions take a sender address, and all operate on a PTB:
   It requests `effects.bcs` so the runtime can decode `TransactionEffects` and refresh handles.
 - `simulate`: calls `simulate_transaction` with checks enabled. No signature is required and the
   chain is not mutated. Handles are not updated.
-- `inspect`/`debug`: calls `simulate_transaction` with checks disabled and asks RPC for
+- `inspect`: calls `simulate_transaction` with checks disabled and asks RPC for
   `command_outputs`. This is meant for debugging and observability, not for guaranteeing that a
   real on-chain commit will succeed.
 
