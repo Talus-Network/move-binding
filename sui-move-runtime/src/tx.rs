@@ -16,6 +16,14 @@ use sui_sdk_types::{
     TypeTag, UserSignature,
 };
 
+#[derive(Clone, Debug)]
+pub(crate) struct FetchedMoveObject {
+    pub(crate) reference: ObjectReference,
+    pub(crate) owner: Owner,
+    pub(crate) struct_tag: StructTag,
+    pub(crate) contents: Vec<u8>,
+}
+
 /// Additional transaction options for submitting a PTB.
 #[derive(Clone, Debug, Default)]
 pub struct TxOptions {
@@ -256,12 +264,15 @@ pub enum RpcError {
     /// Failed to convert protobuf object.
     #[error("proto conversion: {0}")]
     Proto(String),
+    /// Object is a package, not a Move struct object.
+    #[error("object {0} is a package, expected a Move struct object")]
+    NotMoveStruct(Address),
 }
 
 pub(crate) async fn fetch_object_reference_and_owner(
     client: &mut sui_rpc::Client,
     id: Address,
-) -> Result<(ObjectReference, Owner), RpcError> {
+) -> Result<FetchedMoveObject, RpcError> {
     let mut req = GetObjectRequest::new(&id);
     let mut mask = FieldMaskTree::default();
     for path in [
@@ -297,7 +308,16 @@ pub(crate) async fn fetch_object_reference_and_owner(
         .try_into()
         .map_err(|e: TryFromProtoError| RpcError::Proto(e.to_string()))?;
 
-    Ok((reference, *sui_obj.owner()))
+    let move_struct = sui_obj
+        .as_struct()
+        .ok_or(RpcError::NotMoveStruct(*reference.object_id()))?;
+
+    Ok(FetchedMoveObject {
+        reference,
+        owner: *sui_obj.owner(),
+        struct_tag: move_struct.object_type().clone(),
+        contents: move_struct.contents().to_vec(),
+    })
 }
 
 #[derive(Clone, Copy, Debug)]

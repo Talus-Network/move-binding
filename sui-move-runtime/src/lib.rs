@@ -15,7 +15,7 @@ pub use crate::tx::{
 use std::time::Duration;
 
 use sui_crypto::SuiSigner;
-use sui_sdk_types::{Address, Mutability, ProgrammableTransaction, TransactionEffects};
+use sui_sdk_types::{Address, Mutability, ProgrammableTransaction, TransactionEffects, TypeTag};
 
 /// Errors produced by `sui-move-runtime`.
 ///
@@ -41,6 +41,16 @@ pub enum Error {
     /// Simulating or dev-inspecting failed.
     #[error(transparent)]
     Simulate(#[from] tx::SimulateError),
+
+    /// Decoding Move contents failed.
+    #[error("decode object {object_id}: {source}")]
+    Decode {
+        /// Object id that was being decoded.
+        object_id: Address,
+        /// Underlying verification/BCS error.
+        #[source]
+        source: sui_move::DecodeError,
+    },
 
     /// The requested object kind does not match on-chain ownership.
     #[error("object {object_id} is {actual}, expected {expected}")]
@@ -189,8 +199,10 @@ impl<'a, S: SuiSigner> Read<'a, S> {
     ) -> Result<(), Error> {
         let object_id = obj.object_id();
         match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
-            Ok((reference, owner)) => {
-                self.rt.cursor.intern_object::<T>(reference, owner);
+            Ok(fetched) => {
+                self.rt
+                    .cursor
+                    .intern_object::<T>(fetched.reference, fetched.owner);
                 Ok(())
             }
             Err(err @ tx::RpcError::Missing(_)) => {
@@ -216,10 +228,9 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         &mut self,
         object_id: Address,
     ) -> Result<Object<T>, Error> {
-        let (reference, owner) =
-            tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
+        let fetched = tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
 
-        let kind = tx::classify_owner(&owner);
+        let kind = tx::classify_owner(&fetched.owner);
         match kind {
             tx::OwnerKind::Immutable | tx::OwnerKind::AddressOwned => {}
             kind if kind.is_shared_like() => {}
@@ -232,7 +243,138 @@ impl<'a, S: SuiSigner> Read<'a, S> {
             }
         }
 
-        Ok(self.rt.cursor.intern_object::<T>(reference, owner))
+        Ok(self
+            .rt
+            .cursor
+            .intern_object::<T>(fetched.reference, fetched.owner))
+    }
+
+    /// Fetch an object and decode its Move contents into `T`.
+    ///
+    /// This performs a tag check (`T::type_tag_static()` must match the on-chain `TypeTag`) and
+    /// returns both:
+    /// - a runtime-owned handle (`Object<T>`) and
+    /// - the decoded value (`T`).
+    pub async fn get<T: sui_move::MoveStruct + sui_move::HasKey>(
+        &mut self,
+        object_id: Address,
+    ) -> Result<(Object<T>, T), Error> {
+        let fetched =
+            match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
+                Ok(fetched) => fetched,
+                Err(err @ tx::RpcError::Missing(_)) => {
+                    self.rt
+                        .cursor
+                        .tombstone(object_id, TombstoneReason::NotExist);
+                    return Err(Error::Rpc(err));
+                }
+                Err(err) => return Err(Error::Rpc(err)),
+            };
+
+        let obj = self
+            .rt
+            .cursor
+            .intern_object::<T>(fetched.reference, fetched.owner);
+
+        let got = TypeTag::Struct(Box::new(fetched.struct_tag));
+        let decoded = sui_move::MoveInstance::<T>::from_raw_type(got, &fetched.contents)
+            .map_err(|source| Error::Decode { object_id, source })?
+            .value;
+
+        Ok((obj, decoded))
+    }
+
+    /// Fetch an object and decode its contents as `T` without verifying the on-chain type tag.
+    pub async fn get_unchecked<T: sui_move::MoveStruct + sui_move::HasKey>(
+        &mut self,
+        object_id: Address,
+    ) -> Result<(Object<T>, T), Error> {
+        let fetched =
+            match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
+                Ok(fetched) => fetched,
+                Err(err @ tx::RpcError::Missing(_)) => {
+                    self.rt
+                        .cursor
+                        .tombstone(object_id, TombstoneReason::NotExist);
+                    return Err(Error::Rpc(err));
+                }
+                Err(err) => return Err(Error::Rpc(err)),
+            };
+
+        let obj = self
+            .rt
+            .cursor
+            .intern_object::<T>(fetched.reference, fetched.owner);
+        let decoded = T::from_bcs(&fetched.contents).map_err(|err| Error::Decode {
+            object_id,
+            source: err.into(),
+        })?;
+
+        Ok((obj, decoded))
+    }
+
+    /// Fetch and decode the latest on-chain contents for a runtime-owned object handle.
+    ///
+    /// This performs a tag check and refreshes the runtime-owned handle's reference/owner
+    /// information in the cursor.
+    pub async fn decode<T: sui_move::MoveStruct + sui_move::HasKey>(
+        &mut self,
+        obj: &Object<T>,
+    ) -> Result<T, Error> {
+        let object_id = obj.object_id();
+        let fetched =
+            match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
+                Ok(fetched) => fetched,
+                Err(err @ tx::RpcError::Missing(_)) => {
+                    self.rt
+                        .cursor
+                        .tombstone(object_id, TombstoneReason::NotExist);
+                    return Err(Error::Rpc(err));
+                }
+                Err(err) => return Err(Error::Rpc(err)),
+            };
+
+        self.rt
+            .cursor
+            .intern_object::<T>(fetched.reference, fetched.owner);
+
+        let got = TypeTag::Struct(Box::new(fetched.struct_tag));
+        let decoded = sui_move::MoveInstance::<T>::from_raw_type(got, &fetched.contents)
+            .map_err(|source| Error::Decode { object_id, source })?
+            .value;
+
+        Ok(decoded)
+    }
+
+    /// Fetch and decode the latest on-chain contents for a runtime-owned object handle without tag
+    /// verification.
+    ///
+    /// This refreshes the runtime-owned handle's reference/owner information in the cursor.
+    pub async fn decode_unchecked<T: sui_move::MoveStruct + sui_move::HasKey>(
+        &mut self,
+        obj: &Object<T>,
+    ) -> Result<T, Error> {
+        let object_id = obj.object_id();
+        let fetched =
+            match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
+                Ok(fetched) => fetched,
+                Err(err @ tx::RpcError::Missing(_)) => {
+                    self.rt
+                        .cursor
+                        .tombstone(object_id, TombstoneReason::NotExist);
+                    return Err(Error::Rpc(err));
+                }
+                Err(err) => return Err(Error::Rpc(err)),
+            };
+
+        self.rt
+            .cursor
+            .intern_object::<T>(fetched.reference, fetched.owner);
+
+        T::from_bcs(&fetched.contents).map_err(|err| Error::Decode {
+            object_id,
+            source: err.into(),
+        })
     }
 
     /// Construct a receiving object handle by fetching the latest `ObjectReference`.
@@ -247,12 +389,11 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         &mut self,
         object_id: Address,
     ) -> Result<ReceivingObject<T>, Error> {
-        let (reference, owner) =
-            tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
+        let fetched = tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
         Ok(self
             .rt
             .cursor
-            .intern_receiving_object::<T>(reference, owner))
+            .intern_receiving_object::<T>(fetched.reference, fetched.owner))
     }
 
     /// Construct a shared object handle by fetching its initial shared version.
@@ -263,10 +404,9 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         object_id: Address,
         mutability: Mutability,
     ) -> Result<SharedObject<T>, Error> {
-        let (_reference, owner) =
-            tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
+        let fetched = tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
 
-        let kind = tx::classify_owner(&owner);
+        let kind = tx::classify_owner(&fetched.owner);
         let Some(initial_shared_version) = kind.shared_start_version() else {
             return Err(Error::ObjectKind {
                 object_id,
