@@ -5,7 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{parse_address, parse_identifier, HasCopy, HasDrop, HasStore, MoveStruct, MoveType};
+use crate::{
+    parse_address, parse_identifier, HasCopy, HasDrop, HasKey, HasStore, MoveStruct, MoveType,
+};
 
 /// Move `0x1::option::Option<T>`.
 ///
@@ -53,21 +55,25 @@ impl<T: HasStore> HasStore for MoveOption<T> {}
 /// Move `0x2::table::Table<K, V>`.
 ///
 /// The Sui framework table stores data under a `UID`. In Rust this struct carries the ID and a
-/// phantom to preserve type parameters.
+/// size, plus a phantom to preserve type parameters.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Table<K, V> {
+#[serde(bound = "")]
+pub struct Table<K: MoveType + HasCopy + HasDrop + HasStore, V: MoveType + HasStore> {
     pub id: crate::types::UID,
+    pub size: u64,
     #[serde(skip, default)]
     pub phantom: std::marker::PhantomData<(K, V)>,
 }
 
-impl<K: MoveType, V: MoveType> MoveType for Table<K, V> {
+impl<K: MoveType + HasCopy + HasDrop + HasStore, V: MoveType + HasStore> MoveType for Table<K, V> {
     fn type_tag_static() -> sui_sdk_types::TypeTag {
         sui_sdk_types::TypeTag::Struct(Box::new(Self::struct_tag_static()))
     }
 }
 
-impl<K: MoveType, V: MoveType> MoveStruct for Table<K, V> {
+impl<K: MoveType + HasCopy + HasDrop + HasStore, V: MoveType + HasStore> MoveStruct
+    for Table<K, V>
+{
     fn struct_tag_static() -> sui_sdk_types::StructTag {
         sui_sdk_types::StructTag::new(
             parse_address("0x2").expect("address literal"),
@@ -78,62 +84,76 @@ impl<K: MoveType, V: MoveType> MoveStruct for Table<K, V> {
     }
 }
 
-impl<K: HasStore, V: HasStore> HasStore for Table<K, V> {}
+impl<K: MoveType + HasCopy + HasDrop + HasStore, V: MoveType + HasStore> HasKey for Table<K, V> {}
+impl<K: MoveType + HasCopy + HasDrop + HasStore, V: MoveType + HasStore> HasStore for Table<K, V> {}
 
 /// Move `0x2::dynamic_field::Field<K, V>`.
 ///
 /// Dynamic fields are stored under an owning object and addressed by a “name” value.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DynamicField<K, V> {
+#[serde(bound = "")]
+pub struct DynamicField<Name: MoveType + HasCopy + HasDrop + HasStore, Value: MoveType + HasStore> {
     pub id: crate::types::UID,
-    pub name: K,
-    pub value: V,
+    pub name: Name,
+    pub value: Value,
 }
 
-impl<K: MoveType, V: MoveType> MoveType for DynamicField<K, V> {
+impl<Name: MoveType + HasCopy + HasDrop + HasStore, Value: MoveType + HasStore> MoveType
+    for DynamicField<Name, Value>
+{
     fn type_tag_static() -> sui_sdk_types::TypeTag {
         sui_sdk_types::TypeTag::Struct(Box::new(Self::struct_tag_static()))
     }
 }
 
-impl<K: MoveType, V: MoveType> MoveStruct for DynamicField<K, V> {
+impl<Name: MoveType + HasCopy + HasDrop + HasStore, Value: MoveType + HasStore> MoveStruct
+    for DynamicField<Name, Value>
+{
     fn struct_tag_static() -> sui_sdk_types::StructTag {
         sui_sdk_types::StructTag::new(
             parse_address("0x2").expect("address literal"),
             parse_identifier("dynamic_field").expect("module"),
             parse_identifier("Field").expect("name"),
-            vec![K::type_tag_static(), V::type_tag_static()],
+            vec![Name::type_tag_static(), Value::type_tag_static()],
         )
     }
 }
 
-impl<K: HasStore, V: HasStore> HasStore for DynamicField<K, V> {}
-
-/// Move `0x2::dynamic_object_field::DynamicField<K, V>`.
-///
-/// This variant stores an object value (a `key` struct) in the dynamic field.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DynamicObjectField<K, V> {
-    pub id: crate::types::UID,
-    pub name: K,
-    pub value: V,
+impl<Name: MoveType + HasCopy + HasDrop + HasStore, Value: MoveType + HasStore> HasKey
+    for DynamicField<Name, Value>
+{
 }
 
-impl<K: MoveType, V: MoveType> MoveType for DynamicObjectField<K, V> {
+/// Move `0x2::dynamic_object_field::Wrapper<Name>`.
+///
+/// Dynamic object fields are stored as a `dynamic_field::Field<Wrapper<Name>, ID>`, where the
+/// field's `value` stores the child's `object::ID`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct DynamicObjectFieldWrapper<Name: MoveType + HasCopy + HasDrop + HasStore> {
+    pub name: Name,
+}
+
+impl<Name: MoveType + HasCopy + HasDrop + HasStore> MoveType for DynamicObjectFieldWrapper<Name> {
     fn type_tag_static() -> sui_sdk_types::TypeTag {
         sui_sdk_types::TypeTag::Struct(Box::new(Self::struct_tag_static()))
     }
 }
 
-impl<K: MoveType, V: MoveType> MoveStruct for DynamicObjectField<K, V> {
+impl<Name: MoveType + HasCopy + HasDrop + HasStore> MoveStruct for DynamicObjectFieldWrapper<Name> {
     fn struct_tag_static() -> sui_sdk_types::StructTag {
         sui_sdk_types::StructTag::new(
             parse_address("0x2").expect("address literal"),
             parse_identifier("dynamic_object_field").expect("module"),
-            parse_identifier("DynamicField").expect("name"),
-            vec![K::type_tag_static(), V::type_tag_static()],
+            parse_identifier("Wrapper").expect("name"),
+            vec![Name::type_tag_static()],
         )
     }
 }
 
-impl<K: HasStore, V: HasStore> HasStore for DynamicObjectField<K, V> {}
+impl<Name: MoveType + HasCopy + HasDrop + HasStore> HasCopy for DynamicObjectFieldWrapper<Name> {}
+impl<Name: MoveType + HasCopy + HasDrop + HasStore> HasDrop for DynamicObjectFieldWrapper<Name> {}
+impl<Name: MoveType + HasCopy + HasDrop + HasStore> HasStore for DynamicObjectFieldWrapper<Name> {}
+
+/// Move `0x2::dynamic_field::Field<dynamic_object_field::Wrapper<Name>, object::ID>`.
+pub type DynamicObjectField<Name> = DynamicField<DynamicObjectFieldWrapper<Name>, crate::types::ID>;
