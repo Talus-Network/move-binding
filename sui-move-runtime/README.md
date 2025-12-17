@@ -218,6 +218,8 @@ Consequences:
 - Clones of the same handle stay in sync (they share the same cell).
 - Only commits performed through the same `Runtime` advance the cursor.
 - `simulate`/`inspect` never update handles (they do not mutate the chain).
+- If other transactions mutate an object you track, use `Read::refresh(&obj)` to refetch the latest
+  reference/owner and overwrite the cursor’s slot.
 
 ### Storing handles in Rust structs
 

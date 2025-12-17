@@ -5,7 +5,8 @@ mod effects;
 mod handles;
 mod tx;
 
-pub use crate::handles::{Object, ReceivingObject, SharedObject};
+pub use crate::effects::TombstoneReason;
+pub use crate::handles::{CursorSnapshot, Object, ReceivingObject, SharedObject};
 pub use crate::tx::{
     BcsValue, CommandOutputs, InspectOptions, InspectReceipt, Receipt, SimulateOptions,
     SimulationReceipt, TxOptions,
@@ -113,6 +114,20 @@ impl<S: SuiSigner> Runtime<S> {
         }
     }
 
+    /// Replace the runtime cursor with a previously captured snapshot.
+    ///
+    /// Prefer calling this immediately after [`Runtime::new`] and before creating any runtime-owned
+    /// handles.
+    pub fn with_cursor_snapshot(mut self, snapshot: CursorSnapshot) -> Self {
+        self.cursor = handles::Cursor::from_snapshot(snapshot);
+        self
+    }
+
+    /// Snapshot the runtime cursor (your local frontier).
+    pub fn cursor_snapshot(&self) -> CursorSnapshot {
+        self.cursor.snapshot()
+    }
+
     /// Override the default checkpoint wait timeout used by [`Tx::commit`].
     pub fn with_wait_timeout(mut self, timeout: Duration) -> Self {
         self.wait_timeout = timeout;
@@ -157,6 +172,31 @@ impl<'a, S: SuiSigner> Read<'a, S> {
     /// Mutable access to the underlying RPC client (escape hatch).
     pub fn client_mut(&mut self) -> &mut sui_rpc::Client {
         &mut self.rt.client
+    }
+
+    /// Refresh the reference and owner information for a runtime-owned handle.
+    ///
+    /// This is the explicit escape hatch for external drift: if another transaction changes an
+    /// owned object (or rotates its `ObjectReference`), your local cursor does not update until you
+    /// either commit through this runtime or refresh explicitly.
+    pub async fn refresh<T: sui_move::MoveStruct + sui_move::HasKey>(
+        &mut self,
+        obj: &Object<T>,
+    ) -> Result<(), Error> {
+        let object_id = obj.object_id();
+        match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
+            Ok((reference, owner)) => {
+                self.rt.cursor.intern_object::<T>(reference, owner);
+                Ok(())
+            }
+            Err(err @ tx::RpcError::Missing(_)) => {
+                self.rt
+                    .cursor
+                    .tombstone(object_id, TombstoneReason::NotExist);
+                Err(Error::Rpc(err))
+            }
+            Err(err) => Err(Error::Rpc(err)),
+        }
     }
 
     /// Construct a runtime-owned object handle by fetching its latest `ObjectReference` and owner kind.
@@ -339,8 +379,9 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
 /// - `sui-move-ptb` prelude (PTB building)
 pub mod prelude {
     pub use crate::{
-        BcsValue, CommandOutputs, Error, InspectOptions, InspectReceipt, Object, Read, Receipt,
-        ReceivingObject, Runtime, SharedObject, SimulateOptions, SimulationReceipt, Tx, TxOptions,
+        BcsValue, CommandOutputs, CursorSnapshot, Error, InspectOptions, InspectReceipt, Object,
+        Read, Receipt, ReceivingObject, Runtime, SharedObject, SimulateOptions, SimulationReceipt,
+        TombstoneReason, Tx, TxOptions,
     };
     pub use sui_move_call::prelude::*;
     pub use sui_move_ptb::prelude::*;

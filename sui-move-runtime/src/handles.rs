@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, RwLock};
 
+use serde::{Deserialize, Serialize};
 use sui_move_call::{CallArg, ToCallArg};
 use sui_sdk_types::{Address, Mutability, ObjectReference, Owner, SharedInput};
 
@@ -62,6 +63,22 @@ impl ObjectCell {
             *lock = reference;
         }
     }
+}
+
+/// Serializable snapshot of a runtime cursor (your local frontier).
+///
+/// This is meant for persisting and restoring the runtime’s local view across process restarts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CursorSnapshot {
+    objects: Vec<TrackedObjectSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct TrackedObjectSnapshot {
+    object_id: Address,
+    reference: ObjectReference,
+    owner: Owner,
+    tombstone: Option<crate::TombstoneReason>,
 }
 
 /// Runtime-owned handle for an on-chain object used as a transaction input.
@@ -412,10 +429,54 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for SharedObject<T> {
 
 #[derive(Default, Debug)]
 pub(crate) struct Cursor {
-    objects: Mutex<HashMap<Address, Weak<ObjectCell>>>,
+    objects: Mutex<HashMap<Address, Arc<ObjectCell>>>,
 }
 
 impl Cursor {
+    pub(crate) fn from_snapshot(snapshot: CursorSnapshot) -> Self {
+        let mut map = HashMap::<Address, Arc<ObjectCell>>::with_capacity(snapshot.objects.len());
+        for obj in snapshot.objects {
+            debug_assert_eq!(
+                obj.object_id,
+                *obj.reference.object_id(),
+                "cursor snapshot is inconsistent"
+            );
+
+            let cell = Arc::new(ObjectCell::new(obj.reference, obj.owner));
+            if let Some(reason) = obj.tombstone {
+                cell.set_tombstone_reason(reason);
+            }
+            map.insert(obj.object_id, cell);
+        }
+
+        Self {
+            objects: Mutex::new(map),
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> CursorSnapshot {
+        let cells: Vec<Arc<ObjectCell>> = self
+            .objects
+            .lock()
+            .expect("poisoned cursor lock")
+            .values()
+            .cloned()
+            .collect();
+
+        let mut objects: Vec<TrackedObjectSnapshot> = cells
+            .into_iter()
+            .map(|cell| TrackedObjectSnapshot {
+                object_id: cell.object_id,
+                reference: cell.reference(),
+                owner: *cell.owner.read().expect("poisoned object lock"),
+                tombstone: cell.tombstone_reason(),
+            })
+            .collect();
+        objects.sort_by_key(|obj| obj.object_id);
+
+        CursorSnapshot { objects }
+    }
+
     pub(crate) fn intern_object<T: sui_move::MoveStruct + sui_move::HasKey>(
         &self,
         reference: ObjectReference,
@@ -444,16 +505,27 @@ impl Cursor {
         let object_id = *reference.object_id();
 
         let mut map = self.objects.lock().expect("poisoned cursor lock");
-        if let Some(existing) = map.get(&object_id).and_then(Weak::upgrade) {
+        if let Some(existing) = map.get(&object_id) {
             existing.set_reference(reference);
             existing.set_owner(owner);
             existing.clear_tombstone();
-            return existing;
+            return Arc::clone(existing);
         }
 
         let cell = Arc::new(ObjectCell::new(reference, owner));
-        map.insert(object_id, Arc::downgrade(&cell));
+        map.insert(object_id, Arc::clone(&cell));
         cell
+    }
+
+    pub(crate) fn tombstone(&self, object_id: Address, reason: crate::TombstoneReason) {
+        if let Some(cell) = self
+            .objects
+            .lock()
+            .expect("poisoned cursor lock")
+            .get(&object_id)
+        {
+            cell.set_tombstone_reason(reason);
+        }
     }
 
     pub(crate) fn apply_patch(&self, effects: &sui_sdk_types::TransactionEffects) {
@@ -464,8 +536,9 @@ impl Cursor {
             .map(|tombstone| (tombstone.object_id, tombstone.reason))
             .collect();
 
+        let map = self.objects.lock().expect("poisoned cursor lock");
         for (object_id, reason) in &tombstones {
-            if let Some(cell) = self.upgrade(*object_id) {
+            if let Some(cell) = map.get(object_id) {
                 cell.set_tombstone_reason(*reason);
             }
         }
@@ -474,25 +547,12 @@ impl Cursor {
             if tombstones.contains_key(&upsert.object_id) {
                 continue;
             }
-            if let Some(cell) = self.upgrade(upsert.object_id) {
+            if let Some(cell) = map.get(&upsert.object_id) {
                 cell.set_reference(upsert.reference);
                 if let Some(owner) = upsert.owner {
                     cell.set_owner(owner);
                 }
                 cell.clear_tombstone();
-            }
-        }
-    }
-
-    fn upgrade(&self, object_id: Address) -> Option<Arc<ObjectCell>> {
-        let mut map = self.objects.lock().expect("poisoned cursor lock");
-        let weak = map.get(&object_id).cloned()?;
-
-        match weak.upgrade() {
-            Some(cell) => Some(cell),
-            None => {
-                map.remove(&object_id);
-                None
             }
         }
     }
@@ -525,6 +585,58 @@ mod tests {
         assert_eq!(obj_b.object_id(), id);
         assert_eq!(obj_a.reference().version(), 2);
         assert_eq!(obj_b.reference().version(), 2);
+    }
+
+    #[test]
+    fn cursor_snapshot_roundtrips_through_json() {
+        let a = Address::from_hex("0x2").unwrap();
+        let b = Address::from_hex("0x3").unwrap();
+
+        let cursor = Cursor::default();
+        cursor.intern_object::<Demo>(
+            ObjectReference::new(a, 1, Digest::default()),
+            Owner::Immutable,
+        );
+        cursor.intern_object::<Demo>(
+            ObjectReference::new(b, 2, Digest::default()),
+            Owner::Address(Address::from_hex("0x123").unwrap()),
+        );
+        cursor.tombstone(b, crate::TombstoneReason::Wrapped);
+
+        let snapshot = cursor.snapshot();
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let decoded: CursorSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snapshot, decoded);
+
+        let restored = Cursor::from_snapshot(decoded.clone());
+        assert_eq!(restored.snapshot(), decoded);
+    }
+
+    #[test]
+    fn cursor_intern_overwrites_state_and_clears_tombstone() {
+        let id = Address::from_hex("0x2").unwrap();
+        let old = ObjectReference::new(id, 1, Digest::default());
+        let new = ObjectReference::new(id, 7, Digest::default());
+
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(old, Owner::Immutable);
+        cursor.tombstone(id, crate::TombstoneReason::NotExist);
+
+        assert!(matches!(
+            obj.to_call_arg().unwrap_err(),
+            sui_move_call::CallArgError::Tombstoned { .. }
+        ));
+
+        cursor.intern_object::<Demo>(new, Owner::Shared(7));
+
+        assert_eq!(obj.reference().version(), 7);
+        assert_eq!(obj.cell.tombstone_reason(), None);
+        let CallArg::Shared(shared) = obj.to_call_arg().unwrap() else {
+            panic!("expected shared input");
+        };
+        assert_eq!(shared.object_id(), id);
+        assert_eq!(shared.version(), 7);
+        assert_eq!(shared.mutability(), Mutability::Immutable);
     }
 
     #[test]

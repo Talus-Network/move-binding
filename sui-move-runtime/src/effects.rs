@@ -5,16 +5,25 @@ use sui_sdk_types::{
     TransactionEffects,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum TombstoneReason {
+/// Reason an object is considered not-live in the local cursor.
+///
+/// This is derived from transaction effects (e.g. `deleted`, `wrapped`) and is used to make stale
+/// handles fail early when converted into transaction inputs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum TombstoneReason {
+    /// The object was deleted.
     Deleted,
+    /// The object was wrapped (moved under another object).
     Wrapped,
+    /// The object was unwrapped and then deleted in the same transaction.
     UnwrappedThenDeleted,
+    /// The object does not exist.
     NotExist,
 }
 
 impl TombstoneReason {
-    pub(crate) const fn label(self) -> &'static str {
+    /// Stable string label used in errors and diagnostics.
+    pub const fn label(self) -> &'static str {
         match self {
             TombstoneReason::Deleted => "deleted",
             TombstoneReason::Wrapped => "wrapped",
