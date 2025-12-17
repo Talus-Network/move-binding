@@ -152,7 +152,11 @@ impl<S: SuiSigner> Runtime<S> {
     /// - [`Tx::inspect`] (checks disabled + command outputs)
     /// - [`Tx::commit`] (sign/submit/wait + update handles)
     pub fn tx(&mut self, sender: Address) -> Tx<'_, S> {
-        Tx { rt: self, sender }
+        Tx {
+            rt: self,
+            sender,
+            ptb: sui_move_ptb::PtbBuilder::new(),
+        }
     }
 
     fn apply_patch(&self, effects: &TransactionEffects) {
@@ -295,14 +299,57 @@ impl<'a, S: SuiSigner> Read<'a, S> {
     }
 }
 
-/// Transaction view: submit/simulate/inspect a PTB + automatic handle updates on commit.
+/// Transaction builder: build, simulate/inspect, and commit a PTB.
 pub struct Tx<'a, S> {
     rt: &'a mut Runtime<S>,
     sender: Address,
+    ptb: sui_move_ptb::PtbBuilder,
 }
 
 impl<'a, S: SuiSigner> Tx<'a, S> {
-    /// Commit a pre-built PTB and wait for checkpoint inclusion.
+    /// Borrow the underlying PTB builder.
+    ///
+    /// This is useful for accessing less common PTB commands without this crate adding extra
+    /// wrappers.
+    pub fn ptb(&self) -> &sui_move_ptb::PtbBuilder {
+        &self.ptb
+    }
+
+    /// Mutably borrow the underlying PTB builder (escape hatch).
+    pub fn ptb_mut(&mut self) -> &mut sui_move_ptb::PtbBuilder {
+        &mut self.ptb
+    }
+
+    /// Add a raw input to the transaction and return its `Argument::Input`.
+    pub fn input(
+        &mut self,
+        input: sui_move_call::CallArg,
+    ) -> Result<sui_sdk_types::Argument, Error> {
+        Ok(self.ptb.input(input)?)
+    }
+
+    /// Convert a typed value into an input and return its `Argument::Input`.
+    pub fn arg<A: sui_move_call::ToCallArg>(
+        &mut self,
+        value: &A,
+    ) -> Result<sui_sdk_types::Argument, Error> {
+        Ok(self.ptb.arg(value)?)
+    }
+
+    /// Add a Move call command from a typed [`sui_move_call::CallSpec`].
+    pub fn call(
+        &mut self,
+        spec: sui_move_call::CallSpec,
+    ) -> Result<sui_sdk_types::Argument, Error> {
+        Ok(self.ptb.call(spec)?)
+    }
+
+    /// Finish and return the built PTB without submitting it.
+    pub fn finish_ptb(self) -> ProgrammableTransaction {
+        self.ptb.finish()
+    }
+
+    /// Commit the built PTB and wait for checkpoint inclusion.
     ///
     /// If checkpoint waiting times out (or the checkpoint stream errors), this still returns a
     /// [`Receipt`] with `digest` and any decoded effects, and marks the observed finality as
@@ -310,68 +357,131 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
     ///
     /// On success, the runtime applies an effects-derived patch to its cursor, updating
     /// all live [`Object`] and [`ReceivingObject`] handles that match changed objects.
-    pub async fn commit(self, ptb: ProgrammableTransaction) -> Result<Receipt, Error> {
-        self.commit_with(ptb, TxOptions::default()).await
+    pub async fn commit(self) -> Result<Receipt, Error> {
+        self.commit_with(TxOptions::default()).await
     }
 
-    /// Dry-run a PTB (checks enabled) without mutating chain state.
+    /// Commit the built PTB using explicit transaction options.
+    pub async fn commit_with(self, opts: TxOptions) -> Result<Receipt, Error> {
+        let Tx { rt, sender, ptb } = self;
+        Self::commit_ptb_with_inner(rt, sender, ptb.finish(), opts).await
+    }
+
+    /// Commit a pre-built PTB and wait for checkpoint inclusion.
+    ///
+    /// This is the escape hatch for advanced PTB building (coin ops, wiring, etc).
+    pub async fn commit_ptb(self, ptb: ProgrammableTransaction) -> Result<Receipt, Error> {
+        self.commit_ptb_with(ptb, TxOptions::default()).await
+    }
+
+    /// Commit a pre-built PTB using explicit transaction options.
+    pub async fn commit_ptb_with(
+        self,
+        ptb: ProgrammableTransaction,
+        opts: TxOptions,
+    ) -> Result<Receipt, Error> {
+        let Tx { rt, sender, .. } = self;
+        Self::commit_ptb_with_inner(rt, sender, ptb, opts).await
+    }
+
+    async fn commit_ptb_with_inner(
+        rt: &mut Runtime<S>,
+        sender: Address,
+        ptb: ProgrammableTransaction,
+        opts: TxOptions,
+    ) -> Result<Receipt, Error> {
+        let receipt = tx::submit_and_wait(
+            &mut rt.client,
+            &rt.signer,
+            sender,
+            ptb,
+            opts,
+            rt.default_gas_budget,
+            rt.wait_timeout,
+        )
+        .await?;
+
+        if let Some(effects) = &receipt.effects {
+            rt.apply_patch(effects);
+        }
+
+        Ok(receipt)
+    }
+
+    /// Dry-run the built PTB (checks enabled) without mutating chain state.
     ///
     /// This does not update runtime-owned handles.
-    pub async fn simulate(self, ptb: ProgrammableTransaction) -> Result<SimulationReceipt, Error> {
-        self.simulate_with(ptb, SimulateOptions::default()).await
+    pub async fn simulate(&mut self) -> Result<SimulationReceipt, Error> {
+        self.simulate_with(SimulateOptions::default()).await
     }
 
-    /// Dry-run a PTB with explicit simulation options.
+    /// Dry-run the built PTB with explicit simulation options.
     ///
     /// This does not update runtime-owned handles.
     pub async fn simulate_with(
-        self,
+        &mut self,
+        opts: SimulateOptions,
+    ) -> Result<SimulationReceipt, Error> {
+        let ptb = self.ptb.clone().finish();
+        self.simulate_ptb_with(ptb, opts).await
+    }
+
+    /// Dry-run a pre-built PTB (checks enabled) without mutating chain state.
+    ///
+    /// This does not update runtime-owned handles.
+    pub async fn simulate_ptb(
+        &mut self,
+        ptb: ProgrammableTransaction,
+    ) -> Result<SimulationReceipt, Error> {
+        self.simulate_ptb_with(ptb, SimulateOptions::default())
+            .await
+    }
+
+    /// Dry-run a pre-built PTB with explicit simulation options.
+    ///
+    /// This does not update runtime-owned handles.
+    pub async fn simulate_ptb_with(
+        &mut self,
         ptb: ProgrammableTransaction,
         opts: SimulateOptions,
     ) -> Result<SimulationReceipt, Error> {
         Ok(tx::simulate_ptb(&mut self.rt.client, self.sender, ptb, opts).await?)
     }
 
-    /// Dev-inspect a PTB (checks disabled) to retrieve command outputs for debugging.
+    /// Dev-inspect the built PTB (checks disabled) to retrieve command outputs for debugging.
     ///
     /// This does not update runtime-owned handles.
-    pub async fn inspect(self, ptb: ProgrammableTransaction) -> Result<InspectReceipt, Error> {
-        self.inspect_with(ptb, InspectOptions::default()).await
+    pub async fn inspect(&mut self) -> Result<InspectReceipt, Error> {
+        self.inspect_with(InspectOptions::default()).await
     }
 
-    /// Dev-inspect a PTB with explicit inspect options.
+    /// Dev-inspect the built PTB with explicit inspect options.
     ///
     /// This does not update runtime-owned handles.
-    pub async fn inspect_with(
-        self,
+    pub async fn inspect_with(&mut self, opts: InspectOptions) -> Result<InspectReceipt, Error> {
+        let ptb = self.ptb.clone().finish();
+        self.inspect_ptb_with(ptb, opts).await
+    }
+
+    /// Dev-inspect a pre-built PTB (checks disabled) to retrieve command outputs for debugging.
+    ///
+    /// This does not update runtime-owned handles.
+    pub async fn inspect_ptb(
+        &mut self,
+        ptb: ProgrammableTransaction,
+    ) -> Result<InspectReceipt, Error> {
+        self.inspect_ptb_with(ptb, InspectOptions::default()).await
+    }
+
+    /// Dev-inspect a pre-built PTB with explicit inspect options.
+    ///
+    /// This does not update runtime-owned handles.
+    pub async fn inspect_ptb_with(
+        &mut self,
         ptb: ProgrammableTransaction,
         opts: InspectOptions,
     ) -> Result<InspectReceipt, Error> {
         Ok(tx::inspect_ptb(&mut self.rt.client, self.sender, ptb, opts).await?)
-    }
-
-    /// Commit a pre-built PTB using explicit transaction options.
-    pub async fn commit_with(
-        self,
-        ptb: ProgrammableTransaction,
-        opts: TxOptions,
-    ) -> Result<Receipt, Error> {
-        let receipt = tx::submit_and_wait(
-            &mut self.rt.client,
-            &self.rt.signer,
-            self.sender,
-            ptb,
-            opts,
-            self.rt.default_gas_budget,
-            self.rt.wait_timeout,
-        )
-        .await?;
-
-        if let Some(effects) = &receipt.effects {
-            self.rt.apply_patch(effects);
-        }
-
-        Ok(receipt)
     }
 }
 

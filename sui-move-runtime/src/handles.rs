@@ -115,8 +115,9 @@ struct TrackedObjectSnapshot {
 ///
 /// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
 /// let coin: Object<Coin<SUI>> = rt.read().object("0x2".parse().unwrap()).await?;
-/// let ptb = sui_move_ptb::ptb! { touch(&coin); }?;
-/// rt.tx(sender).commit(ptb).await?;
+/// let mut tx = rt.tx(sender);
+/// tx.call(touch(&coin))?;
+/// tx.commit().await?;
 /// # Ok(())
 /// # }
 /// ```

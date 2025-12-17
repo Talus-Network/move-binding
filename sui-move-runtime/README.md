@@ -53,17 +53,18 @@ async fn demo() -> Result<(), Error> {
     // Read: fetch a typed runtime-owned handle.
     let coin: Object<Coin<SUI>> = rt.read().object::<Coin<SUI>>(coin_id).await?;
 
-    // Tx: preflight (checks enabled, no chain mutation).
-    let ptb = sui_move_ptb::ptb! { touch_coin(&coin, 10); }?;
-    let _sim = rt.tx(sender).simulate(ptb).await?;
+    // Tx: build once, then simulate/inspect/commit.
+    let mut tx = rt.tx(sender);
+    tx.call(touch_coin(&coin, 10))?;
 
-    // Tx: inspect (checks disabled, returns per-command outputs).
-    let ptb = sui_move_ptb::ptb! { touch_coin(&coin, 10); }?;
-    let _dbg = rt.tx(sender).inspect(ptb).await?;
+    // Preflight (checks enabled, no chain mutation).
+    let _sim = tx.simulate().await?;
 
-    // Tx: commit (mutates chain, updates all live handles from effects).
-    let ptb = sui_move_ptb::ptb! { touch_coin(&coin, 10); }?;
-    rt.tx(sender).commit(ptb).await?;
+    // Debugging (checks disabled, returns per-command outputs).
+    let _dbg = tx.inspect().await?;
+
+    // Commit (mutates chain, updates all live handles from effects).
+    tx.commit().await?;
 
     // Back in Read: `coin`'s `ObjectReference` has been updated internally.
     let _latest_ref = coin.reference();
@@ -132,22 +133,23 @@ fn views(obj: Object<Demo>) -> Result<(), sui_move_call::CallArgError> {
 
 ## Transaction actions in detail
 
-All transaction actions take a sender address, and all operate on a PTB:
+All transaction actions take a sender address and are methods on a transaction builder (`Tx`):
 
-- `commit`: builds a full `Transaction`, signs it, submits it, and waits for checkpoint inclusion.
-  It requests `effects.bcs` so the runtime can decode `TransactionEffects` and refresh handles.
-  If checkpoint waiting times out (or the checkpoint stream errors), `commit` still returns a
-  `Receipt` with `digest` + any decoded effects, and marks the finality as observed `Executed`.
+- `call` / `arg` / `input`: build the PTB in-place.
 - `simulate`: calls `simulate_transaction` with checks enabled. No signature is required and the
   chain is not mutated. Handles are not updated.
 - `inspect`: calls `simulate_transaction` with checks disabled and asks RPC for
   `command_outputs`. This is meant for debugging and observability, not for guaranteeing that a
   real on-chain commit will succeed.
+- `commit`: builds a full `Transaction`, signs it, submits it, and waits for checkpoint inclusion.
+  It requests `effects.bcs` so the runtime can decode `TransactionEffects` and refresh handles.
+  If checkpoint waiting times out (or the checkpoint stream errors), `commit` still returns a
+  `Receipt` with `digest` + any decoded effects, and marks the finality as observed `Executed`.
 
 ## Building PTBs directly (more complex flows)
 
 If you need native PTB commands (coin ops, transfers, result wiring, etc), build the PTB explicitly
-using `sui-move-ptb` and pass it to `commit` / `simulate` / `inspect`.
+using `sui-move-ptb` and pass it to `commit_ptb` / `simulate_ptb` / `inspect_ptb`.
 
 ```rust
 use sui_move_runtime::prelude::*;
@@ -246,7 +248,7 @@ let ptb = sui_move_ptb::ptb! {
     // any call that mutates `wallet.coin` on-chain
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 }?; 
-rt.tx(sender).commit(ptb).await?;
+rt.tx(sender).commit_ptb(ptb).await?;
 
 // The `ObjectReference` is refreshed internally after commit.
 let _latest = wallet.coin.reference();
