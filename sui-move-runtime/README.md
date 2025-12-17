@@ -82,7 +82,6 @@ async fn demo() -> Result<(), Error> {
   - `Object<T>`: runtime-owned object handle; picks the correct input mode on conversion (shared defaults to immutable)
   - `SharedObject<T>`: explicit shared input (`Input::Shared`)
   - `ReceivingObject<T>`: explicit receiving input (`Input::Receiving`)
-  - `AnyObject<T>`: convenience wrapper for owned/shared (shared defaults to immutable)
 - Transaction actions:
   - `commit`: signs/submits/waits and then updates handles
   - `simulate`: checks enabled, no mutation, no handle updates
@@ -105,13 +104,9 @@ Note: Sui also has `Owner::ConsensusAddressOwner` objects. They use the shared-l
 
 This crate mirrors those shapes:
 
-- Use `Read::object::<T>(id)` to get an `Object<T>` for immutable/owned objects.
-  - If the object is shared on-chain, this returns `Error::ObjectKind`.
-- Use `Read::object_any::<T>(id)` to get an `AnyObject<T>` that works for both owned/immutable and
-  shared objects (shared defaults to immutable).
-  - If you need a mutable shared input, call `any.as_shared_mutable()?` to get a `SharedObject<T>`.
-- Use `Read::shared_immutable::<T>(id)` / `Read::shared_mutable::<T>(id)` to get a `SharedObject<T>`.
-- Use `Read::receiving_object::<T>(id)` to get a `ReceivingObject<T>`.
+- Use `Read::object::<T>(id)` to get an `Object<T>` for owned/immutable and shared-like objects.
+  - Shared-like objects default to immutable shared when used as an argument.
+  - Derive explicit views when needed: `obj.shared_immutable()?`, `obj.shared_mutable()?`, `obj.receiving()?`.
 
 ### Explicit views from `Object<T>`
 
