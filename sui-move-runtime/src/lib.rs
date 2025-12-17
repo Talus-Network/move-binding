@@ -183,7 +183,7 @@ impl<'a, S: SuiSigner> Read<'a, S> {
             }
         }
 
-        Ok(self.rt.registry.intern_object::<T>(reference))
+        Ok(self.rt.registry.intern_object::<T>(reference, owner))
     }
 
     /// Construct an object handle regardless of whether it is owned/immutable or shared on-chain.
@@ -202,7 +202,7 @@ impl<'a, S: SuiSigner> Read<'a, S> {
 
         match tx::classify_owner(&owner) {
             tx::OwnerKind::Immutable | tx::OwnerKind::AddressOwned => Ok(AnyObject::from_object(
-                self.rt.registry.intern_object::<T>(reference),
+                self.rt.registry.intern_object::<T>(reference, owner),
             )),
             kind if kind.is_shared_like() => {
                 let Some(initial_shared_version) = kind.shared_start_version() else {
@@ -238,9 +238,12 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         &mut self,
         object_id: Address,
     ) -> Result<ReceivingObject<T>, Error> {
-        let (reference, _owner) =
+        let (reference, owner) =
             tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
-        Ok(self.rt.registry.intern_receiving_object::<T>(reference))
+        Ok(self
+            .rt
+            .registry
+            .intern_receiving_object::<T>(reference, owner))
     }
 
     /// Construct a shared object handle by fetching its initial shared version.

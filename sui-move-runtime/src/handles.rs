@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use sui_move_call::{CallArg, ToCallArg};
-use sui_sdk_types::{Address, Mutability, ObjectReference, SharedInput};
+use sui_sdk_types::{Address, Mutability, ObjectReference, Owner, SharedInput};
 
 use crate::effects;
 
@@ -12,18 +12,42 @@ use crate::effects;
 struct ObjectCell {
     object_id: Address,
     reference: RwLock<ObjectReference>,
+    owner: RwLock<Owner>,
+    tombstone: RwLock<Option<effects::TombstoneReason>>,
 }
 
 impl ObjectCell {
-    fn new(reference: ObjectReference) -> Self {
+    fn new(reference: ObjectReference, owner: Owner) -> Self {
         Self {
             object_id: *reference.object_id(),
             reference: RwLock::new(reference),
+            owner: RwLock::new(owner),
+            tombstone: RwLock::new(None),
         }
     }
 
     fn reference(&self) -> ObjectReference {
         self.reference.read().expect("poisoned object lock").clone()
+    }
+
+    fn set_owner(&self, owner: Owner) {
+        let mut lock = self.owner.write().expect("poisoned object lock");
+        *lock = owner;
+    }
+
+    #[cfg(test)]
+    fn tombstone_reason(&self) -> Option<effects::TombstoneReason> {
+        *self.tombstone.read().expect("poisoned object lock")
+    }
+
+    fn set_tombstone_reason(&self, reason: effects::TombstoneReason) {
+        let mut lock = self.tombstone.write().expect("poisoned object lock");
+        *lock = Some(reason);
+    }
+
+    fn clear_tombstone(&self) {
+        let mut lock = self.tombstone.write().expect("poisoned object lock");
+        *lock = None;
     }
 
     fn set_reference(&self, reference: ObjectReference) {
@@ -404,8 +428,9 @@ impl Registry {
     pub(crate) fn intern_object<T: sui_move::MoveStruct + sui_move::HasKey>(
         &self,
         reference: ObjectReference,
+        owner: Owner,
     ) -> Object<T> {
-        let cell = self.intern_cell(reference);
+        let cell = self.intern_cell(reference, owner);
         Object {
             cell,
             phantom: PhantomData,
@@ -415,32 +440,55 @@ impl Registry {
     pub(crate) fn intern_receiving_object<T: sui_move::MoveStruct + sui_move::HasKey>(
         &self,
         reference: ObjectReference,
+        owner: Owner,
     ) -> ReceivingObject<T> {
-        let cell = self.intern_cell(reference);
+        let cell = self.intern_cell(reference, owner);
         ReceivingObject {
             cell,
             phantom: PhantomData,
         }
     }
 
-    fn intern_cell(&self, reference: ObjectReference) -> Arc<ObjectCell> {
+    fn intern_cell(&self, reference: ObjectReference, owner: Owner) -> Arc<ObjectCell> {
         let object_id = *reference.object_id();
 
         let mut map = self.objects.lock().expect("poisoned registry lock");
         if let Some(existing) = map.get(&object_id).and_then(Weak::upgrade) {
             existing.set_reference(reference);
+            existing.set_owner(owner);
+            existing.clear_tombstone();
             return existing;
         }
 
-        let cell = Arc::new(ObjectCell::new(reference));
+        let cell = Arc::new(ObjectCell::new(reference, owner));
         map.insert(object_id, Arc::downgrade(&cell));
         cell
     }
 
     pub(crate) fn apply_effects(&self, effects_in: &sui_sdk_types::TransactionEffects) {
-        for update in effects::updated_references(effects_in) {
-            if let Some(cell) = self.upgrade(update.object_id) {
-                cell.set_reference(update.reference);
+        let patch = effects::EffectsPatch::from_effects(effects_in);
+        let tombstones: HashMap<Address, effects::TombstoneReason> = patch
+            .tombstones
+            .into_iter()
+            .map(|tombstone| (tombstone.object_id, tombstone.reason))
+            .collect();
+
+        for (object_id, reason) in &tombstones {
+            if let Some(cell) = self.upgrade(*object_id) {
+                cell.set_tombstone_reason(*reason);
+            }
+        }
+
+        for upsert in patch.upserts {
+            if tombstones.contains_key(&upsert.object_id) {
+                continue;
+            }
+            if let Some(cell) = self.upgrade(upsert.object_id) {
+                cell.set_reference(upsert.reference);
+                if let Some(owner) = upsert.owner {
+                    cell.set_owner(owner);
+                }
+                cell.clear_tombstone();
             }
         }
     }
@@ -479,8 +527,8 @@ mod tests {
         let b = ObjectReference::new(id, 2, Digest::default());
 
         let registry = Registry::default();
-        let obj_a: Object<Demo> = registry.intern_object(a);
-        let obj_b: Object<Demo> = registry.intern_object(b);
+        let obj_a: Object<Demo> = registry.intern_object(a, Owner::Immutable);
+        let obj_b: Object<Demo> = registry.intern_object(b, Owner::Immutable);
 
         assert_eq!(obj_a.object_id(), id);
         assert_eq!(obj_b.object_id(), id);
@@ -494,7 +542,7 @@ mod tests {
         let old = ObjectReference::new(id, 1, Digest::default());
 
         let registry = Registry::default();
-        let obj: Object<Demo> = registry.intern_object(old);
+        let obj: Object<Demo> = registry.intern_object(old, Owner::Immutable);
         assert_eq!(obj.reference().version(), 1);
 
         let effects = TransactionEffects::V2(Box::new(TransactionEffectsV2 {
@@ -528,6 +576,45 @@ mod tests {
     }
 
     #[test]
+    fn apply_effects_tombstones_deleted_objects() {
+        let id = Address::from_hex("0x2").unwrap();
+        let old = ObjectReference::new(id, 1, Digest::default());
+
+        let registry = Registry::default();
+        let obj: Object<Demo> = registry.intern_object(old, Owner::Immutable);
+        assert_eq!(obj.cell.tombstone_reason(), None);
+
+        let effects = TransactionEffects::V2(Box::new(TransactionEffectsV2 {
+            status: ExecutionStatus::Success,
+            epoch: 0,
+            gas_used: GasCostSummary::new(0, 0, 0, 0),
+            transaction_digest: Digest::default(),
+            gas_object_index: None,
+            events_digest: None,
+            dependencies: vec![],
+            lamport_version: 7,
+            changed_objects: vec![ChangedObject {
+                object_id: id,
+                input_state: ObjectIn::Exist {
+                    version: 1,
+                    digest: Digest::default(),
+                    owner: Owner::Immutable,
+                },
+                output_state: ObjectOut::NotExist,
+                id_operation: IdOperation::None,
+            }],
+            unchanged_consensus_objects: vec![],
+            auxiliary_data_digest: None,
+        }));
+
+        registry.apply_effects(&effects);
+        assert_eq!(
+            obj.cell.tombstone_reason(),
+            Some(effects::TombstoneReason::NotExist)
+        );
+    }
+
+    #[test]
     fn any_object_defaults_shared_to_immutable() {
         let id = Address::from_hex("0x2").unwrap();
 
@@ -555,7 +642,7 @@ mod tests {
         let reference = ObjectReference::new(id, 1, Digest::default());
 
         let registry = Registry::default();
-        let obj: Object<Demo> = registry.intern_object(reference.clone());
+        let obj: Object<Demo> = registry.intern_object(reference.clone(), Owner::Immutable);
         let any = AnyObject::<Demo>::from_object(obj);
 
         assert!(!any.is_shared());

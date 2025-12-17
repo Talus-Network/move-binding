@@ -5,12 +5,6 @@ use sui_sdk_types::{
     TransactionEffects,
 };
 
-#[derive(Clone, Debug)]
-pub(crate) struct ReferenceUpdate {
-    pub(crate) object_id: sui_sdk_types::Address,
-    pub(crate) reference: ObjectReference,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum TombstoneReason {
     Deleted,
@@ -45,18 +39,6 @@ impl EffectsPatch {
             TransactionEffects::V1(v1) => patch_from_v1(v1),
         }
     }
-}
-
-pub(crate) fn updated_references(effects: &TransactionEffects) -> Vec<ReferenceUpdate> {
-    let patch = EffectsPatch::from_effects(effects);
-    patch
-        .upserts
-        .into_iter()
-        .map(|upsert| ReferenceUpdate {
-            object_id: upsert.object_id,
-            reference: upsert.reference,
-        })
-        .collect()
 }
 
 fn patch_from_v1(effects: &sui_sdk_types::TransactionEffectsV1) -> EffectsPatch {
