@@ -75,7 +75,7 @@ pub struct InspectOptions {}
 
 /// Receipt for a simulated transaction (dry-run).
 ///
-/// Returned by [`crate::MoveTime::simulate`]. This does not mutate chain state and does not update
+/// Returned by [`crate::Tx::simulate`]. This does not mutate chain state and does not update
 /// runtime-owned handles.
 #[derive(Clone, Debug)]
 pub struct SimulationReceipt {
@@ -87,7 +87,7 @@ pub struct SimulationReceipt {
 
 /// Receipt for a dev-inspected transaction (checks disabled) including command outputs.
 ///
-/// Returned by [`crate::MoveTime::inspect`]. This does not mutate chain state and does not update
+/// Returned by [`crate::Tx::inspect`]. This does not mutate chain state and does not update
 /// runtime-owned handles.
 ///
 /// `outputs[i]` corresponds to the `i`-th PTB command.

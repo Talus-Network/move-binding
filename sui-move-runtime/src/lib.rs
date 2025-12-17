@@ -55,9 +55,9 @@ pub enum Error {
 
 /// Long-lived runtime owning RPC + signer + handle registry.
 ///
-/// This is the entry point for the “two namespaces” mental model:
-/// - [`Runtime::read`] for Rust-time reads and handle construction
-/// - [`Runtime::move_time`] for Move-time transaction commit
+/// This is the entry point for the Read → Tx → Commit mental model:
+/// - [`Runtime::read`] for fetching/constructing typed handles
+/// - [`Runtime::tx`] for simulating/inspecting/committing PTBs
 ///
 /// # Runtime-owned handles
 ///
@@ -65,8 +65,8 @@ pub enum Error {
 /// runtime by `object_id`. Clones of the same handle share the same internal cell, so they all see
 /// updates.
 ///
-/// After [`MoveTime::commit`], the runtime decodes `TransactionEffects` from RPC and updates any
-/// live handle cells whose object id appears in the effects.
+/// After [`Tx::commit`], the runtime decodes `TransactionEffects` from RPC and updates any live
+/// handle cells whose object id appears in the effects.
 ///
 /// This is the core ergonomic win: you can store typed handles in normal Rust structs without
 /// threading `&mut` everywhere just to keep `ObjectReference`s current.
@@ -112,7 +112,7 @@ impl<S: SuiSigner> Runtime<S> {
         }
     }
 
-    /// Override the default checkpoint wait timeout used by [`MoveTime::commit`].
+    /// Override the default checkpoint wait timeout used by [`Tx::commit`].
     pub fn with_wait_timeout(mut self, timeout: Duration) -> Self {
         self.wait_timeout = timeout;
         self
@@ -124,21 +124,19 @@ impl<S: SuiSigner> Runtime<S> {
         self
     }
 
-    /// Enter Rust-time (read-only namespace).
-    ///
-    /// The returned [`Read`] view contains RPC helpers for fetching typed handles.
+    /// Create a read view for fetching typed handles.
     pub fn read(&mut self) -> Read<'_, S> {
         Read { rt: self }
     }
 
-    /// Enter Move-time (transaction namespace) for the given sender.
+    /// Create a transaction view for the given sender.
     ///
-    /// The returned [`MoveTime`] view contains the execution actions:
-    /// - [`MoveTime::simulate`] (checks enabled, no mutation)
-    /// - [`MoveTime::inspect`] (checks disabled + command outputs)
-    /// - [`MoveTime::commit`] (sign/submit/wait + update handles)
-    pub fn move_time(&mut self, sender: Address) -> MoveTime<'_, S> {
-        MoveTime { rt: self, sender }
+    /// The returned [`Tx`] view contains the execution actions:
+    /// - [`Tx::simulate`] (checks enabled, no mutation)
+    /// - [`Tx::inspect`] (checks disabled + command outputs)
+    /// - [`Tx::commit`] (sign/submit/wait + update handles)
+    pub fn tx(&mut self, sender: Address) -> Tx<'_, S> {
+        Tx { rt: self, sender }
     }
 
     fn apply_effects(&self, effects: &TransactionEffects) {
@@ -146,7 +144,7 @@ impl<S: SuiSigner> Runtime<S> {
     }
 }
 
-/// Rust-time view: read/fetch helpers and handle construction.
+/// Read view: read/fetch helpers and handle construction.
 ///
 /// This view is intentionally read-only with respect to the chain: it fetches data from RPC and
 /// constructs typed handles, but it does not submit transactions.
@@ -280,16 +278,13 @@ impl<'a, S: SuiSigner> Read<'a, S> {
     }
 }
 
-/// Move-time view: build/submit/wait + automatic handle updates.
-///
-/// The core mental model is that you “open Move-time” for a sender and then perform one action.
-/// This is why these methods take `self` by value: the view represents a scoped boundary.
-pub struct MoveTime<'a, S> {
+/// Transaction view: submit/simulate/inspect a PTB + automatic handle updates on commit.
+pub struct Tx<'a, S> {
     rt: &'a mut Runtime<S>,
     sender: Address,
 }
 
-impl<'a, S: SuiSigner> MoveTime<'a, S> {
+impl<'a, S: SuiSigner> Tx<'a, S> {
     /// Commit a pre-built PTB and wait for checkpoint inclusion.
     ///
     /// On success, the runtime applies the returned transaction effects to its registry, updating
@@ -359,116 +354,17 @@ impl<'a, S: SuiSigner> MoveTime<'a, S> {
     }
 }
 
-/// Macro wrapper: open Move-time, build a PTB from `CallSpec` expressions, commit, and return.
-///
-/// The block should contain expressions that evaluate to `sui_move_call::CallSpec` (typically
-/// module interface functions).
-///
-/// This macro expands to an async block, so it must be awaited.
-///
-/// For more complex transactions (native commands, branching, explicit result wiring), build a
-/// `ProgrammableTransaction` directly using `sui_move_ptb::ptb!(tx => { ... })` and call
-/// [`MoveTime::commit`] / [`MoveTime::simulate`] / [`MoveTime::inspect`] instead.
-///
-/// # Example
-/// ```rust,no_run
-/// use sui_move_runtime::prelude::*;
-/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
-/// let package: sui_sdk_types::Address = "0x1".parse().unwrap();
-/// move_time!(rt, sender, {
-///     CallSpec::new(package, "m", "f").unwrap();
-/// }).await?;
-/// # Ok(())
-/// # }
-/// ```
-#[macro_export]
-macro_rules! move_time {
-    ($rt:expr, $sender:expr, { $($spec:expr);+ $(;)? }) => {{
-        async {
-            let ptb = sui_move_ptb::ptb! { $($spec);+ }?;
-            $rt.move_time($sender).commit(ptb).await
-        }
-    }};
-}
-
-/// Macro wrapper: open Move-time, build a PTB from `CallSpec` expressions, dry-run it, and return.
-///
-/// This runs with checks enabled and does not mutate chain state.
-///
-/// This macro expands to an async block, so it must be awaited.
-///
-/// # Example
-/// ```rust,no_run
-/// use sui_move_runtime::prelude::*;
-/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
-/// let package: sui_sdk_types::Address = "0x1".parse().unwrap();
-/// let receipt = simulate_time!(rt, sender, {
-///     CallSpec::new(package, "m", "f").unwrap();
-/// })
-/// .await?;
-/// # let _ = receipt;
-/// # Ok(())
-/// # }
-/// ```
-#[macro_export]
-macro_rules! simulate_time {
-    ($rt:expr, $sender:expr, { $($spec:expr);+ $(;)? }) => {{
-        async {
-            let ptb = sui_move_ptb::ptb! { $($spec);+ }?;
-            $rt.move_time($sender).simulate(ptb).await
-        }
-    }};
-}
-
-/// Macro wrapper: open Move-time, build a PTB from `CallSpec` expressions, dev-inspect it, and return.
-///
-/// This runs with checks disabled and does not mutate chain state. It returns per-command outputs
-/// (return values + mutated-by-ref values).
-///
-/// This macro expands to an async block, so it must be awaited.
-///
-/// # Example
-/// ```rust,no_run
-/// use sui_move_runtime::prelude::*;
-/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
-/// let package: sui_sdk_types::Address = "0x1".parse().unwrap();
-/// let receipt = inspect_time!(rt, sender, {
-///     CallSpec::new(package, "m", "f").unwrap();
-/// })
-/// .await?;
-/// # let _ = receipt;
-/// # Ok(())
-/// # }
-/// ```
-#[macro_export]
-macro_rules! inspect_time {
-    ($rt:expr, $sender:expr, { $($spec:expr);+ $(;)? }) => {{
-        async {
-            let ptb = sui_move_ptb::ptb! { $($spec);+ }?;
-            $rt.move_time($sender).inspect(ptb).await
-        }
-    }};
-}
-
-/// Alias for [`inspect_time!`] with a more “debugging” oriented name.
-#[macro_export]
-macro_rules! debug_time {
-    ($($tt:tt)*) => {
-        $crate::inspect_time!($($tt)*)
-    };
-}
-
 /// Convenience re-exports for downstream code.
 ///
 /// This prelude is meant for application code and examples. It includes:
-/// - `sui-move-runtime` macros and core types
+/// - `sui-move-runtime` core types
 /// - `sui-move-call` prelude (call building)
 /// - `sui-move-ptb` prelude (PTB building)
 pub mod prelude {
     pub use crate::{
-        debug_time, inspect_time, move_time, simulate_time, AnyObject, BcsValue, CommandOutputs,
-        Error, InspectOptions, InspectReceipt, MoveTime, Object, Read, Receipt, ReceivingObject,
-        Runtime, SharedObject, SimulateOptions, SimulationReceipt, TxOptions,
+        AnyObject, BcsValue, CommandOutputs, Error, InspectOptions, InspectReceipt, Object, Read,
+        Receipt, ReceivingObject, Runtime, SharedObject, SimulateOptions, SimulationReceipt, Tx,
+        TxOptions,
     };
     pub use sui_move_call::prelude::*;
     pub use sui_move_ptb::prelude::*;

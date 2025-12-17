@@ -10,10 +10,10 @@ This crate sits at the top of this stack:
 - `sui-move-runtime` (this crate): submit/simulate/inspect PTBs + keep runtime-owned handles up to date
 
 This crate solves one problem:
-**provide an ergonomic “Rust-time vs Move-time” boundary for typed Sui interactions**:
+**provide an ergonomic Read → Tx → Commit boundary for typed Sui interactions**:
 
-- In **Rust-time** you fetch objects and prepare call specs.
-- In **Move-time** you dry-run / dev-inspect / commit a PTB.
+- In **Read** you fetch objects and prepare call specs.
+- In **Tx** you dry-run / dev-inspect / commit a PTB.
 - On **commit**, all live runtime-owned handles are automatically refreshed from transaction effects.
 
 ## Quickstart (end-to-end)
@@ -50,19 +50,22 @@ async fn demo() -> Result<(), Error> {
 
     let mut rt = Runtime::new(client, signer);
 
-    // Rust-time: fetch a typed runtime-owned handle.
+    // Read: fetch a typed runtime-owned handle.
     let coin: Object<Coin<SUI>> = rt.read().object::<Coin<SUI>>(coin_id).await?;
 
-    // Move-time: preflight (checks enabled, no chain mutation).
-    let _sim = simulate_time!(rt, sender, { touch_coin(&coin, 10); }).await?;
+    // Tx: preflight (checks enabled, no chain mutation).
+    let ptb = sui_move_ptb::ptb! { touch_coin(&coin, 10); }?;
+    let _sim = rt.tx(sender).simulate(ptb).await?;
 
-    // Move-time: debug (checks disabled, returns per-command outputs).
-    let _dbg = debug_time!(rt, sender, { touch_coin(&coin, 10); }).await?;
+    // Tx: debug (checks disabled, returns per-command outputs).
+    let ptb = sui_move_ptb::ptb! { touch_coin(&coin, 10); }?;
+    let _dbg = rt.tx(sender).inspect(ptb).await?;
 
-    // Move-time: commit (mutates chain, updates all live handles from effects).
-    move_time!(rt, sender, { touch_coin(&coin, 10); }).await?;
+    // Tx: commit (mutates chain, updates all live handles from effects).
+    let ptb = sui_move_ptb::ptb! { touch_coin(&coin, 10); }?;
+    rt.tx(sender).commit(ptb).await?;
 
-    // Back in Rust-time: `coin`'s `ObjectReference` has been updated internally.
+    // Back in Read: `coin`'s `ObjectReference` has been updated internally.
     let _latest_ref = coin.reference();
     Ok(())
 }
@@ -71,19 +74,19 @@ async fn demo() -> Result<(), Error> {
 
 ## Core API
 
-- Runtime namespaces:
+- Runtime views:
   - `Runtime`: owns RPC client, signer, and the handle registry
-  - `Read`: Rust-time view (fetch typed handles)
-  - `MoveTime`: Move-time view (simulate/inspect/commit PTBs)
+  - `Read`: read view (fetch typed handles)
+  - `Tx`: transaction view (simulate/inspect/commit PTBs)
 - Handles (all implement `ToCallArg`):
   - `Object<T>`: immutable-or-owned input (`Input::ImmutableOrOwned`)
   - `ReceivingObject<T>`: receiving input (`Input::Receiving`)
   - `SharedObject<T>`: shared input (`Input::Shared`)
   - `AnyObject<T>`: convenience wrapper for owned/shared (shared defaults to immutable)
-- Move-time actions:
+- Transaction actions:
   - `commit`: signs/submits/waits and then updates handles
   - `simulate`: checks enabled, no mutation, no handle updates
-  - `inspect` / `debug`: checks disabled, returns command outputs, no handle updates
+  - `inspect`: checks disabled, returns command outputs, no handle updates
 
 ## Choosing the right handle kind
 
@@ -104,9 +107,9 @@ This crate mirrors those shapes:
 - Use `Read::shared_immutable::<T>(id)` / `Read::shared_mutable::<T>(id)` to get a `SharedObject<T>`.
 - Use `Read::receiving_object::<T>(id)` to get a `ReceivingObject<T>`.
 
-## Move-time actions in detail
+## Transaction actions in detail
 
-All Move-time actions take a sender address, and all operate on a PTB:
+All transaction actions take a sender address, and all operate on a PTB:
 
 - `commit`: builds a full `Transaction`, signs it, submits it, and waits for checkpoint inclusion.
   It requests `effects.bcs` so the runtime can decode `TransactionEffects` and refresh handles.
@@ -117,8 +120,6 @@ All Move-time actions take a sender address, and all operate on a PTB:
   real on-chain commit will succeed.
 
 ## Building PTBs directly (more complex flows)
-
-The `*_time!` macros are a convenience for the common case “I have a list of `CallSpec`s”.
 
 If you need native PTB commands (coin ops, transfers, result wiring, etc), build the PTB explicitly
 using `sui-move-ptb` and pass it to `commit` / `simulate` / `inspect`.
@@ -185,7 +186,7 @@ This crate makes handles *runtime-owned*:
 - `Read::object`/`Read::receiving_object` fetch the current `ObjectReference` and **intern** it in
   a registry keyed by `object_id`.
 - The returned `Object<T>` / `ReceivingObject<T>` is a small `Clone` handle backed by `Arc<RwLock<...>>`.
-- `MoveTime::commit` requests `effects.bcs` from RPC, decodes `TransactionEffects`, extracts updated
+- `Tx::commit` requests `effects.bcs` from RPC, decodes `TransactionEffects`, extracts updated
   references, and updates any live handle cells that match those object ids.
 
 Consequences:
@@ -213,11 +214,11 @@ let wallet = Wallet {
     coin: rt.read().object("0x2".parse().unwrap()).await?,
 };
 
-move_time!(rt, sender, {
+let ptb = sui_move_ptb::ptb! {
     // any call that mutates `wallet.coin` on-chain
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
-})
-.await?;
+}?; 
+rt.tx(sender).commit(ptb).await?;
 
 // The `ObjectReference` is refreshed internally after commit.
 let _latest = wallet.coin.reference();

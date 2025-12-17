@@ -62,7 +62,8 @@ impl ObjectCell {
 ///
 /// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
 /// let coin: Object<Coin<SUI>> = rt.read().object("0x2".parse().unwrap()).await?;
-/// move_time!(rt, sender, { touch(&coin); }).await?;
+/// let ptb = sui_move_ptb::ptb! { touch(&coin); }?;
+/// rt.tx(sender).commit(ptb).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -97,7 +98,7 @@ impl<T> Object<T> {
 
     /// Snapshot of the current `ObjectReference`.
     ///
-    /// This value is updated after [`crate::MoveTime::commit`] (if the object was changed by the
+    /// This value is updated after [`crate::Tx::commit`] (if the object was changed by the
     /// committed transaction). It is not automatically refreshed when other transactions mutate
     /// the object on-chain.
     pub fn reference(&self) -> ObjectReference {
@@ -145,7 +146,7 @@ impl<T> ReceivingObject<T> {
 
     /// Snapshot of the current `ObjectReference`.
     ///
-    /// This value is updated after [`crate::MoveTime::commit`] (if the object was changed by the
+    /// This value is updated after [`crate::Tx::commit`] (if the object was changed by the
     /// committed transaction).
     pub fn reference(&self) -> ObjectReference {
         self.cell.reference()
@@ -253,7 +254,8 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for SharedObject<T> {
 
 /// Convenience wrapper for “some object” whose on-chain ownership might be owned/immutable or shared.
 ///
-/// This wrapper exists to keep user code in “namespace mode”:
+/// This wrapper exists for ergonomics when you don't know whether an on-chain object is
+/// immutable/owned or shared:
 /// - fetch a handle (`Read::object_any`)
 /// - pass it to interface functions as `&impl ToCallArg`
 ///
@@ -276,11 +278,13 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for SharedObject<T> {
 /// let any: AnyObject<Coin<SUI>> = rt.read().object_any("0x2".parse().unwrap()).await?;
 ///
 /// // Works for both owned/immutable and shared objects (shared defaults to immutable).
-/// move_time!(rt, sender, { touch(&any); }).await?;
+/// let ptb = sui_move_ptb::ptb! { touch(&any); }?;
+/// rt.tx(sender).commit(ptb).await?;
 ///
 /// // If it is shared and you need &mut on the Move side:
 /// let shared_mut = any.as_shared_mutable()?;
-/// move_time!(rt, sender, { touch(&shared_mut); }).await?;
+/// let ptb = sui_move_ptb::ptb! { touch(&shared_mut); }?;
+/// rt.tx(sender).commit(ptb).await?;
 /// # Ok(())
 /// # }
 /// ```
