@@ -13,6 +13,17 @@ pub(crate) enum TombstoneReason {
     NotExist,
 }
 
+impl TombstoneReason {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            TombstoneReason::Deleted => "deleted",
+            TombstoneReason::Wrapped => "wrapped",
+            TombstoneReason::UnwrappedThenDeleted => "unwrapped-then-deleted",
+            TombstoneReason::NotExist => "not-exist",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Tombstone {
     pub(crate) object_id: sui_sdk_types::Address,

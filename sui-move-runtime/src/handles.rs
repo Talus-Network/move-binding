@@ -7,6 +7,7 @@ use sui_move_call::{CallArg, ToCallArg};
 use sui_sdk_types::{Address, Mutability, ObjectReference, Owner, SharedInput};
 
 use crate::effects;
+use crate::tx;
 
 #[derive(Debug)]
 struct ObjectCell {
@@ -35,7 +36,6 @@ impl ObjectCell {
         *lock = owner;
     }
 
-    #[cfg(test)]
     fn tombstone_reason(&self) -> Option<effects::TombstoneReason> {
         *self.tombstone.read().expect("poisoned object lock")
     }
@@ -64,10 +64,22 @@ impl ObjectCell {
     }
 }
 
-/// Runtime-owned handle for an immutable-or-owned object input.
+/// Runtime-owned handle for an on-chain object used as a transaction input.
 ///
 /// This is the ergonomic “seamless handle” variant: it carries the Rust type `T` while storing
 /// the mutable `ObjectReference` behind interior mutability. The runtime updates it after commit.
+///
+/// Unlike `sui-move-call::MoveObject<T>`, this handle also tracks:
+/// - the latest known on-chain owner kind (owned/immutable/shared/...)
+/// - tombstone status (deleted/wrapped/not-exist)
+///
+/// When converted into a `CallArg`, the handle chooses the correct Sui input shape based on its
+/// current owner kind:
+/// - immutable/address-owned → `Input::ImmutableOrOwned(ObjectReference)`
+/// - shared-like (`Owner::Shared` or `Owner::ConsensusAddress`) → `Input::Shared(SharedInput)` (immutable by default)
+///
+/// If the object becomes a child object, is tombstoned, or the owner kind is unknown, conversion
+/// fails early with a [`sui_move_call::CallArgError`].
 ///
 /// `Object<T>` implements [`ToCallArg`], so you can pass it to `sui-move-call` interface functions
 /// that accept `&impl ToCallArg` and push it into a `CallSpec`.
@@ -132,7 +144,39 @@ impl<T> Object<T> {
 
 impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for Object<T> {
     fn to_call_arg(&self) -> Result<CallArg, sui_move_call::CallArgError> {
-        Ok(CallArg::ImmutableOrOwned(self.reference()))
+        if let Some(reason) = self.cell.tombstone_reason() {
+            return Err(sui_move_call::CallArgError::Tombstoned {
+                object_id: self.object_id(),
+                reason: reason.label(),
+            });
+        }
+
+        let owner = self.cell.owner.read().expect("poisoned object lock");
+        match tx::classify_owner(&owner) {
+            tx::OwnerKind::Immutable | tx::OwnerKind::AddressOwned => {
+                Ok(CallArg::ImmutableOrOwned(self.reference()))
+            }
+            kind if kind.is_shared_like() => {
+                let Some(initial_shared_version) = kind.shared_start_version() else {
+                    return Err(sui_move_call::CallArgError::ObjectKind {
+                        object_id: self.object_id(),
+                        expected: "shared",
+                        actual: kind.label(),
+                    });
+                };
+
+                Ok(CallArg::Shared(SharedInput::new(
+                    self.object_id(),
+                    initial_shared_version,
+                    Mutability::Immutable,
+                )))
+            }
+            other => Err(sui_move_call::CallArgError::ObjectKind {
+                object_id: self.object_id(),
+                expected: "immutable-or-owned or shared",
+                actual: other.label(),
+            }),
+        }
     }
 }
 
@@ -573,6 +617,91 @@ mod tests {
 
         registry.apply_effects(&effects);
         assert_eq!(obj.reference().version(), 7);
+    }
+
+    #[test]
+    fn object_defaults_shared_to_immutable() {
+        let id = Address::from_hex("0x2").unwrap();
+        let reference = ObjectReference::new(id, 1, Digest::default());
+
+        let registry = Registry::default();
+        let obj: Object<Demo> = registry.intern_object(reference, Owner::Shared(7));
+
+        let arg = obj.to_call_arg().unwrap();
+        let CallArg::Shared(shared) = arg else {
+            panic!("expected shared call arg")
+        };
+
+        assert_eq!(shared.object_id(), id);
+        assert_eq!(shared.version(), 7);
+        assert_eq!(shared.mutability(), Mutability::Immutable);
+    }
+
+    #[test]
+    fn object_to_call_arg_fails_for_tombstoned_objects() {
+        let id = Address::from_hex("0x2").unwrap();
+        let reference = ObjectReference::new(id, 1, Digest::default());
+
+        let registry = Registry::default();
+        let obj: Object<Demo> = registry.intern_object(reference, Owner::Immutable);
+
+        let effects = TransactionEffects::V2(Box::new(TransactionEffectsV2 {
+            status: ExecutionStatus::Success,
+            epoch: 0,
+            gas_used: GasCostSummary::new(0, 0, 0, 0),
+            transaction_digest: Digest::default(),
+            gas_object_index: None,
+            events_digest: None,
+            dependencies: vec![],
+            lamport_version: 7,
+            changed_objects: vec![ChangedObject {
+                object_id: id,
+                input_state: ObjectIn::Exist {
+                    version: 1,
+                    digest: Digest::default(),
+                    owner: Owner::Immutable,
+                },
+                output_state: ObjectOut::NotExist,
+                id_operation: IdOperation::None,
+            }],
+            unchanged_consensus_objects: vec![],
+            auxiliary_data_digest: None,
+        }));
+
+        registry.apply_effects(&effects);
+        let err = obj.to_call_arg().unwrap_err();
+
+        match err {
+            sui_move_call::CallArgError::Tombstoned { object_id, reason } => {
+                assert_eq!(object_id, id);
+                assert_eq!(reason, "not-exist");
+            }
+            other => panic!("expected tombstoned error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn object_to_call_arg_fails_for_child_objects() {
+        let id = Address::from_hex("0x2").unwrap();
+        let parent = Address::from_hex("0x3").unwrap();
+        let reference = ObjectReference::new(id, 1, Digest::default());
+
+        let registry = Registry::default();
+        let obj: Object<Demo> = registry.intern_object(reference, Owner::Object(parent));
+
+        let err = obj.to_call_arg().unwrap_err();
+        match err {
+            sui_move_call::CallArgError::ObjectKind {
+                object_id,
+                expected,
+                actual,
+            } => {
+                assert_eq!(object_id, id);
+                assert_eq!(expected, "immutable-or-owned or shared");
+                assert_eq!(actual, "child-object");
+            }
+            other => panic!("expected object kind error, got {other:?}"),
+        }
     }
 
     #[test]
