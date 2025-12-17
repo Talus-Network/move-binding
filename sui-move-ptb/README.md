@@ -46,6 +46,13 @@ Because inputs live in a shared table, it’s common to reference the same input
 (especially the same object handle across multiple Move calls). `PtbBuilder` reuses identical
 inputs to keep PTBs compact and make reuse natural.
 
+Additional rules for object inputs:
+
+- Shared inputs are unified by `(object_id, initial_shared_version)` and upgraded to the most
+  permissive mutability mode when the same shared object is added multiple times.
+- Duplicate object ids across input objects and receiving objects are rejected early (matching
+  Sui’s `DuplicateObjectRefInput` class of errors).
+
 Exception: `Input::FundsWithdrawal` is intentionally **not** deduplicated (duplicates can be
 meaningful).
 
