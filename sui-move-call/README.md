@@ -8,9 +8,15 @@ building or executing transactions.
 
 ## Where it fits
 
-`sui-move-call` sits directly above `sui-move`: it uses `MoveType`/`MoveStruct` to build
-type-checked call descriptions (`CallSpec`). Transaction-building and execution are intentionally
-out of scope here.
+`sui-move-call` is the “Call” layer in the repository’s Read → Tx → Commit mental model (`MODEL.md`):
+
+- **Read** (runtime) fetches objects and classifies on-chain ownership.
+- **Call** (this crate) describes *what* to call and how to encode arguments.
+- **PTB** builds a `ProgrammableTransaction` from a `CallSpec`.
+- **Commit** (runtime) submits and applies effects to advance the cursor.
+
+This crate sits directly above `sui-move`: it uses `MoveType`/`MoveStruct` to build type-checked
+call descriptions (`CallSpec`). Transaction-building and execution are intentionally out of scope.
 
 ## Core types
 
@@ -20,6 +26,9 @@ out of scope here.
 - `MoveObject<T>`: typed handle for `Input::ImmutableOrOwned(ObjectReference)`
 - `SharedMoveObject<T>`: typed handle for `Input::Shared(SharedInput)`
 - `ReceivingMoveObject<T>`: typed handle for `Input::Receiving(ObjectReference)`
+
+Note: `ToCallArg` can fail even when BCS encoding is not involved (for example, higher layers can
+refuse to convert tombstoned handles or invalid owner kinds into object inputs).
 
 ## Receiving is an input mode (not ownership)
 

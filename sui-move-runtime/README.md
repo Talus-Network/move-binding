@@ -10,11 +10,14 @@ This crate sits at the top of this stack:
 - `sui-move-runtime` (this crate): submit/simulate/inspect PTBs + keep runtime-owned handles up to date
 
 This crate solves one problem:
-**provide an ergonomic Read → Tx → Commit boundary for typed Sui interactions**:
+**provide an ergonomic Read → Tx → Commit boundary for typed Sui interactions** while staying
+truthful to Sui’s “versioned objects + effects” model (`MODEL.md`):
 
 - In **Read** you fetch objects and prepare call specs.
-- In **Tx** you dry-run / dev-inspect / commit a PTB.
-- On **commit**, all live runtime-owned handles are automatically refreshed from transaction effects.
+- In **Tx** you build a PTB and can simulate / dev-inspect / commit it.
+- On **commit**, you always get a `Receipt` (digest + effects/status when available + finality
+  info), and the runtime advances its local cursor by applying an effects-derived patch whenever
+  effects are present.
 
 ## Quickstart (end-to-end)
 
@@ -42,7 +45,7 @@ fn touch_coin(coin: &impl ToCallArg, amount: u64) -> CallSpec {
     spec
 }
 
-async fn demo() -> Result<(), Error> {
+async fn demo() -> Result<(), Box<dyn std::error::Error>> {
     let client = sui_rpc::Client::new(sui_rpc::Client::TESTNET_FULLNODE).unwrap();
     let signer = DummySigner;
     let sender: Address = "0x123".parse().unwrap();
@@ -64,7 +67,10 @@ async fn demo() -> Result<(), Error> {
     let _dbg = tx.inspect().await?;
 
     // Commit (mutates chain, updates all live handles from effects).
-    tx.commit().await?;
+    let receipt = tx.commit().await?;
+
+    // On-chain execution failures are recorded in the receipt (they are not transport errors).
+    receipt.ensure_success()?;
 
     // Back in Read: `coin`'s `ObjectReference` has been updated internally.
     let _latest_ref = coin.reference();
@@ -90,8 +96,16 @@ async fn demo() -> Result<(), Error> {
 
 ## Choosing the right handle kind
 
-Sui has multiple *input kinds* for objects, and they are intentionally represented as distinct
-types (because they have different wire shapes):
+Sui has two related but distinct concepts:
+
+- **On-chain owner kinds** (`sui_sdk_types::Owner`): what an object *is* right now.
+- **Transaction input modes** (`sui_sdk_types::Input`): how you pass an object *this time*.
+
+This crate uses on-chain ownership (from `Owner`) to choose a safe default transaction input mode
+when converting an [`Object<T>`] into an argument.
+
+Transaction input modes for objects have different wire shapes and are intentionally represented as
+distinct types:
 
 - Immutable/owned: `Input::ImmutableOrOwned(ObjectReference)`
 - Shared: `Input::Shared(SharedInput)` (uses `initial_shared_version` + mutability)
@@ -100,8 +114,11 @@ types (because they have different wire shapes):
 Note: receiving is not an on-chain owner kind. It is an ephemeral per-transaction “receiving
 ticket” consumed by `sui::transfer::receive`/`public_receive`.
 
-Note: Sui also has `Owner::ConsensusAddressOwner` objects. They use the shared-like input shape
-(`start_version` plays the same role as `initial_shared_version`).
+Note: Sui also has `Owner::ConsensusAddress { start_version, owner }` objects. They use the
+shared-like input shape (`start_version` plays the same role as `initial_shared_version`).
+
+Note: child objects (`Owner::Object(_)`) cannot be used as direct transaction inputs. This crate
+rejects them early when you try to construct handles that would later become invalid inputs.
 
 This crate mirrors those shapes:
 
@@ -146,6 +163,62 @@ All transaction actions take a sender address and are methods on a transaction b
   If checkpoint waiting times out (or the checkpoint stream errors), `commit` still returns a
   `Receipt` with `digest` + any decoded effects, and marks the finality as observed `Executed`.
 
+## Receipts, finality, and recovery
+
+`Tx::commit*` returns a [`Receipt`]. The receipt preserves recovery information:
+
+- `digest` is always present once submission succeeds.
+- `effects`/`status` are present when returned by RPC (this crate requests `effects.bcs`).
+- `requested_finality` is what the runtime asked for (currently always checkpointed for commits).
+- `observed_finality` + `checkpoint_wait` describe what the runtime actually observed.
+
+If checkpoint waiting times out, your transaction may still have executed. When effects are present
+in the receipt, the runtime already advanced its cursor before returning the receipt.
+
+```rust,no_run
+use sui_move_runtime::prelude::*;
+use std::time::Duration;
+use sui_sdk_types::Address;
+
+# #[derive(Clone)]
+# struct DummySigner;
+# impl sui_crypto::SuiSigner for DummySigner {
+#     fn sign_transaction(&self, _tx: &sui_sdk_types::Transaction) -> Result<sui_sdk_types::UserSignature, sui_crypto::SignatureError> {
+#         unimplemented!("provide a real signer")
+#     }
+#     fn sign_personal_message(&self, _msg: &sui_sdk_types::PersonalMessage<'_>) -> Result<sui_sdk_types::UserSignature, sui_crypto::SignatureError> {
+#         unimplemented!("provide a real signer")
+#     }
+# }
+#
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+let client = sui_rpc::Client::new(sui_rpc::Client::TESTNET_FULLNODE)?;
+let signer = DummySigner;
+let sender: Address = "0x123".parse()?;
+
+let mut rt = Runtime::new(client, signer)
+    .with_wait_timeout(Duration::from_millis(1)); // deliberately tiny to illustrate timeouts
+
+let mut tx = rt.tx(sender);
+tx.call(CallSpec::new("0x1".parse()?, "m", "f")?)?;
+
+let receipt = tx.commit().await?;
+
+match receipt.checkpoint_wait {
+    CheckpointWaitOutcome::Ok => {}
+    CheckpointWaitOutcome::Timeout | CheckpointWaitOutcome::StreamError { .. } => {
+        // `receipt.digest` is known; `receipt.effects` may be present.
+        // If effects are present, the cursor has already been advanced.
+    }
+    CheckpointWaitOutcome::NotRequested => unreachable!("commit always requests checkpointing"),
+}
+
+receipt.ensure_success()?;
+# Ok(())
+# }
+# let _ = demo;
+```
+
 ## Building PTBs directly (more complex flows)
 
 If you need native PTB commands (coin ops, transfers, result wiring, etc), build the PTB explicitly
@@ -169,7 +242,7 @@ assert_eq!(ptb.commands.len(), 1);
 
 ## Gas and sponsorship (commit only)
 
-`commit_with(ptb, TxOptions)` lets you control gas details:
+`Tx::commit_with(TxOptions)` and `Tx::commit_ptb_with(ptb, TxOptions)` let you control gas details:
 
 - `TxOptions::sponsor`: gas owner (defaults to sender)
 - `TxOptions::gas`: explicit gas object reference (otherwise the runtime selects one coin owned by the gas owner)
@@ -179,6 +252,33 @@ assert_eq!(ptb.commands.len(), 1);
 
 `simulate`/`inspect` do not sign or submit, and do not currently model explicit gas payment
 configuration (they rely on the simulation RPC).
+
+## Typed reads (tag-checked decoding)
+
+In addition to constructing handles, `Read` can fetch and decode Move object contents:
+
+- `Read::get::<T>(id) -> (Object<T>, T)`: tag-check + decode and return both a handle and value.
+- `Read::decode(&Object<T>) -> T`: refresh the handle and decode the latest contents.
+- `*_unchecked` variants skip type-tag verification (explicit escape hatch).
+
+These helpers use `sui-move`’s tag-checked decoding (`MoveInstance<T>`), so “type tag says X but
+BCS layout expects Y” becomes an explicit error instead of a silent footgun.
+
+```rust,no_run
+use sui_move_runtime::prelude::*;
+use sui_move::{coin::Coin, sui::SUI};
+use sui_sdk_types::Address;
+
+# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>) -> Result<(), Error> {
+let coin_id: Address = "0x2".parse().unwrap();
+
+let (coin, value): (Object<Coin<SUI>>, Coin<SUI>) = rt.read().get(coin_id).await?;
+let _latest: Coin<SUI> = rt.read().decode(&coin).await?;
+let _unchecked: Coin<SUI> = rt.read().decode_unchecked(&coin).await?;
+# let _ = value;
+# Ok(())
+# }
+```
 
 ## Writing interface functions (important)
 
@@ -278,10 +378,12 @@ assert_eq!(decoded, 10);
 ## Configuration and escape hatches
 
 - `Runtime::with_default_gas_budget` and `TxOptions::gas_budget` configure gas budget for commits.
+- `Runtime::with_wait_timeout` controls how long `commit` waits for checkpoint inclusion.
 - `TxOptions::sponsor` lets you submit sponsored transactions (gas owner differs from sender).
+- `Runtime::with_cursor_snapshot` / `Runtime::cursor_snapshot` provide snapshot/restore for the cursor.
 - `Read::client_mut` gives direct access to the underlying `sui_rpc::Client` when needed.
 
 ## Non-goals
 
 - No code generation: interface functions are still handwritten or derived elsewhere.
-- No “full ORM”: fetched contents are not modeled as live decoded Rust structs (this crate focuses on handles + execution).
+- No “live ORM”: decoding is explicit snapshot reads (`Read::get` / `Read::decode`), not a background-syncing cache.
