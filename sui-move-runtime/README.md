@@ -56,18 +56,11 @@ async fn demo() -> Result<(), Box<dyn std::error::Error>> {
     // Read: fetch a typed runtime-owned handle.
     let coin: Object<Coin<SUI>> = rt.read().object::<Coin<SUI>>(coin_id).await?;
 
-    // Tx: build once, then simulate/inspect/commit.
-    let mut tx = rt.tx(sender);
-    tx.call(touch_coin(&coin, 10))?;
-
-    // Preflight (checks enabled, no chain mutation).
-    let _sim = tx.simulate().await?;
-
-    // Debugging (checks disabled, returns per-command outputs).
-    let _dbg = tx.inspect().await?;
-
-    // Commit (mutates chain, updates all live handles from effects).
-    let receipt = tx.commit().await?;
+    // Tx: one-shot build + commit with the `tx!` macro.
+    let receipt = sui_move_runtime::tx!(&mut rt, sender => {
+        touch_coin(&coin, 10);
+    })
+    .await?;
 
     // On-chain execution failures are recorded in the receipt (they are not transport errors).
     receipt.ensure_success()?;
@@ -85,6 +78,8 @@ async fn demo() -> Result<(), Box<dyn std::error::Error>> {
   - `Runtime`: owns RPC client, signer, and the handle cursor
   - `Read`: read view (fetch typed handles)
   - `Tx`: transaction view (simulate/inspect/commit PTBs)
+- Ergonomic helper:
+  - `tx!`: macro that builds a `Tx`, runs an action, and returns a future (`.await`)
 - Handles (all implement `ToCallArg`):
   - `Object<T>`: runtime-owned object handle; picks the correct input mode on conversion (shared defaults to immutable)
   - `SharedObject<T>`: explicit shared input (`Input::Shared`)
@@ -93,6 +88,46 @@ async fn demo() -> Result<(), Box<dyn std::error::Error>> {
   - `commit`: signs/submits/waits and then updates handles
   - `simulate`: checks enabled, no mutation, no handle updates
   - `inspect`: checks disabled, returns command outputs, no handle updates
+
+## Preflight and debugging (simulate / inspect)
+
+If you want a one-shot action, use the `tx!` macro variants:
+
+```rust,no_run
+use sui_move_runtime::prelude::*;
+use sui_sdk_types::Address;
+
+# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: Address, coin: Object<sui_move::coin::Coin<sui_move::sui::SUI>>) -> Result<(), Box<dyn std::error::Error>> {
+let _sim = sui_move_runtime::tx!(simulate, &mut rt, sender => {
+    CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
+})
+.await?;
+
+let _dbg = sui_move_runtime::tx!(inspect, &mut rt, sender => {
+    CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
+})
+.await?;
+# let _ = coin;
+# Ok(())
+# }
+```
+
+If you need to simulate/inspect the **exact same PTB** before committing it, build a `Tx` once:
+
+```rust,no_run
+use sui_move_runtime::prelude::*;
+
+# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Box<dyn std::error::Error>> {
+let mut tx = rt.tx(sender);
+tx.call(CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap())?;
+
+let _sim = tx.simulate().await?;
+let _dbg = tx.inspect().await?;
+let receipt = tx.commit().await?;
+receipt.ensure_success()?;
+# Ok(())
+# }
+```
 
 ## Choosing the right handle kind
 

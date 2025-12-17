@@ -642,3 +642,184 @@ pub mod prelude {
     pub use sui_move_ptb::prelude::*;
     pub use sui_sdk_types::Mutability;
 }
+
+/// Build and run a transaction in the Read → Tx → Commit mental model.
+///
+/// This macro is a small ergonomic wrapper around [`Runtime::tx`]. It builds a transaction using a
+/// temporary [`Tx`] builder and then runs exactly one action:
+/// - commit (default),
+/// - simulate (checks enabled), or
+/// - inspect (checks disabled + command outputs).
+///
+/// The macro returns a **future**, so callers use `.await`:
+///
+/// ```rust,no_run
+/// use sui_move_runtime::prelude::*;
+///
+/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Box<dyn std::error::Error>> {
+/// let receipt = sui_move_runtime::tx!(&mut rt, sender => {
+///     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
+/// })
+/// .await?;
+/// receipt.ensure_success()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Forms
+///
+/// **Call list (default commit)**: each statement expression must evaluate to a `CallSpec`.
+///
+/// ```rust,no_run
+/// # use sui_move_runtime::prelude::*;
+/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Box<dyn std::error::Error>> {
+/// let _receipt = sui_move_runtime::tx!(&mut rt, sender => {
+///     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
+///     CallSpec::new("0x1".parse().unwrap(), "m", "g").unwrap();
+/// })
+/// .await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// **Builder form**: opt into direct access to `Tx` (escape hatch for PTB wiring).
+///
+/// ```rust,no_run
+/// # use sui_move_runtime::prelude::*;
+/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Box<dyn std::error::Error>> {
+/// let _receipt = sui_move_runtime::tx!(&mut rt, sender, tx => {
+///     let _out = tx.call(CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap())?;
+/// })
+/// .await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// **Action variants**:
+///
+/// ```rust,no_run
+/// # use sui_move_runtime::prelude::*;
+/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Box<dyn std::error::Error>> {
+/// let _sim = sui_move_runtime::tx!(simulate, &mut rt, sender => {
+///     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
+/// })
+/// .await?;
+///
+/// let _dbg = sui_move_runtime::tx!(inspect, &mut rt, sender => {
+///     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
+/// })
+/// .await?;
+/// # Ok(())
+/// # }
+/// ```
+#[macro_export]
+macro_rules! tx {
+    (commit, $rt:expr, $sender:expr => { $($spec:expr);+ $(;)? }) => {{
+        async {
+            let mut __tx = ($rt).tx($sender);
+            $(
+                __tx.call($spec)?;
+            )+
+            __tx.commit().await
+        }
+    }};
+    (commit, $rt:expr, $sender:expr, $tx:ident => { $($body:tt)* }) => {{
+        async {
+            let mut $tx = ($rt).tx($sender);
+            { $($body)* }
+            $tx.commit().await
+        }
+    }};
+
+    (commit_with($opts:expr), $rt:expr, $sender:expr => { $($spec:expr);+ $(;)? }) => {{
+        async {
+            let mut __tx = ($rt).tx($sender);
+            $(
+                __tx.call($spec)?;
+            )+
+            __tx.commit_with($opts).await
+        }
+    }};
+    (commit_with($opts:expr), $rt:expr, $sender:expr, $tx:ident => { $($body:tt)* }) => {{
+        async {
+            let mut $tx = ($rt).tx($sender);
+            { $($body)* }
+            $tx.commit_with($opts).await
+        }
+    }};
+
+    (simulate, $rt:expr, $sender:expr => { $($spec:expr);+ $(;)? }) => {{
+        async {
+            let mut __tx = ($rt).tx($sender);
+            $(
+                __tx.call($spec)?;
+            )+
+            __tx.simulate().await
+        }
+    }};
+    (simulate, $rt:expr, $sender:expr, $tx:ident => { $($body:tt)* }) => {{
+        async {
+            let mut $tx = ($rt).tx($sender);
+            { $($body)* }
+            $tx.simulate().await
+        }
+    }};
+
+    (simulate_with($opts:expr), $rt:expr, $sender:expr => { $($spec:expr);+ $(;)? }) => {{
+        async {
+            let mut __tx = ($rt).tx($sender);
+            $(
+                __tx.call($spec)?;
+            )+
+            __tx.simulate_with($opts).await
+        }
+    }};
+    (simulate_with($opts:expr), $rt:expr, $sender:expr, $tx:ident => { $($body:tt)* }) => {{
+        async {
+            let mut $tx = ($rt).tx($sender);
+            { $($body)* }
+            $tx.simulate_with($opts).await
+        }
+    }};
+
+    (inspect, $rt:expr, $sender:expr => { $($spec:expr);+ $(;)? }) => {{
+        async {
+            let mut __tx = ($rt).tx($sender);
+            $(
+                __tx.call($spec)?;
+            )+
+            __tx.inspect().await
+        }
+    }};
+    (inspect, $rt:expr, $sender:expr, $tx:ident => { $($body:tt)* }) => {{
+        async {
+            let mut $tx = ($rt).tx($sender);
+            { $($body)* }
+            $tx.inspect().await
+        }
+    }};
+
+    (inspect_with($opts:expr), $rt:expr, $sender:expr => { $($spec:expr);+ $(;)? }) => {{
+        async {
+            let mut __tx = ($rt).tx($sender);
+            $(
+                __tx.call($spec)?;
+            )+
+            __tx.inspect_with($opts).await
+        }
+    }};
+    (inspect_with($opts:expr), $rt:expr, $sender:expr, $tx:ident => { $($body:tt)* }) => {{
+        async {
+            let mut $tx = ($rt).tx($sender);
+            { $($body)* }
+            $tx.inspect_with($opts).await
+        }
+    }};
+
+    ($rt:expr, $sender:expr => { $($spec:expr);+ $(;)? }) => {{
+        $crate::tx!(commit, $rt, $sender => { $($spec);+ })
+    }};
+    ($rt:expr, $sender:expr, $tx:ident => { $($body:tt)* }) => {{
+        $crate::tx!(commit, $rt, $sender, $tx => { $($body)* })
+    }};
+}
