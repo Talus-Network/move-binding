@@ -79,9 +79,9 @@ async fn demo() -> Result<(), Error> {
   - `Read`: read view (fetch typed handles)
   - `Tx`: transaction view (simulate/inspect/commit PTBs)
 - Handles (all implement `ToCallArg`):
-  - `Object<T>`: immutable-or-owned input (`Input::ImmutableOrOwned`)
-  - `ReceivingObject<T>`: receiving input (`Input::Receiving`)
-  - `SharedObject<T>`: shared input (`Input::Shared`)
+  - `Object<T>`: runtime-owned object handle; picks the correct input mode on conversion (shared defaults to immutable)
+  - `SharedObject<T>`: explicit shared input (`Input::Shared`)
+  - `ReceivingObject<T>`: explicit receiving input (`Input::Receiving`)
   - `AnyObject<T>`: convenience wrapper for owned/shared (shared defaults to immutable)
 - Transaction actions:
   - `commit`: signs/submits/waits and then updates handles
@@ -112,6 +112,28 @@ This crate mirrors those shapes:
   - If you need a mutable shared input, call `any.as_shared_mutable()?` to get a `SharedObject<T>`.
 - Use `Read::shared_immutable::<T>(id)` / `Read::shared_mutable::<T>(id)` to get a `SharedObject<T>`.
 - Use `Read::receiving_object::<T>(id)` to get a `ReceivingObject<T>`.
+
+### Explicit views from `Object<T>`
+
+`Object<T>` chooses `Input::ImmutableOrOwned` vs `Input::Shared` based on the runtime’s latest
+known owner kind. When an object is shared-like, it defaults to **immutable shared**.
+
+If you need a specific input mode, derive an explicit view at the moment it matters:
+
+```rust,no_run
+use sui_move_runtime::prelude::*;
+
+#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+struct Demo {
+    id: sui_move::types::UID,
+}
+
+fn views(obj: Object<Demo>) -> Result<(), sui_move_call::CallArgError> {
+    let _shared_mut: SharedObject<Demo> = obj.shared_mutable()?;
+    let _receiving: ReceivingObject<Demo> = obj.receiving()?;
+    Ok(())
+}
+```
 
 ## Transaction actions in detail
 

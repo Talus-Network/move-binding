@@ -140,16 +140,91 @@ impl<T> Object<T> {
     pub fn reference(&self) -> ObjectReference {
         self.cell.reference()
     }
-}
 
-impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for Object<T> {
-    fn to_call_arg(&self) -> Result<CallArg, sui_move_call::CallArgError> {
+    /// Return an immutable shared view of this object, if it is shared-like on-chain.
+    pub fn shared_immutable(&self) -> Result<SharedObject<T>, sui_move_call::CallArgError> {
+        let initial_shared_version = self.shared_start_version()?;
+        Ok(SharedObject::immutable(
+            self.object_id(),
+            initial_shared_version,
+        ))
+    }
+
+    /// Return a mutable shared view of this object, if it is shared-like on-chain.
+    pub fn shared_mutable(&self) -> Result<SharedObject<T>, sui_move_call::CallArgError> {
+        let initial_shared_version = self.shared_start_version()?;
+        Ok(SharedObject::mutable(
+            self.object_id(),
+            initial_shared_version,
+        ))
+    }
+
+    /// Return a receiving view of this object, if it is address-owned.
+    ///
+    /// Receiving is a transaction input mode used for `sui::transfer::Receiving<T>`: it allows
+    /// receiving an object that was transferred to an address that is also an object ID (transfer-to-object).
+    ///
+    /// This helper validates only the coarse owner kind:
+    /// - allowed: address-owned objects
+    /// - rejected: shared-like, immutable, child objects, tombstoned objects
+    ///
+    /// On-chain, Sui also checks that the object can be received through the specific parent
+    /// object you prove mutable access to (this runtime does not try to pre-validate that).
+    pub fn receiving(&self) -> Result<ReceivingObject<T>, sui_move_call::CallArgError> {
+        self.ensure_not_tombstoned()?;
+
+        let owner = self.cell.owner.read().expect("poisoned object lock");
+        match tx::classify_owner(&owner) {
+            tx::OwnerKind::AddressOwned => Ok(ReceivingObject {
+                cell: Arc::clone(&self.cell),
+                phantom: PhantomData,
+            }),
+            other => Err(sui_move_call::CallArgError::ObjectKind {
+                object_id: self.object_id(),
+                expected: "address-owned",
+                actual: other.label(),
+            }),
+        }
+    }
+
+    fn ensure_not_tombstoned(&self) -> Result<(), sui_move_call::CallArgError> {
         if let Some(reason) = self.cell.tombstone_reason() {
             return Err(sui_move_call::CallArgError::Tombstoned {
                 object_id: self.object_id(),
                 reason: reason.label(),
             });
         }
+        Ok(())
+    }
+
+    fn shared_start_version(&self) -> Result<u64, sui_move_call::CallArgError> {
+        self.ensure_not_tombstoned()?;
+
+        let owner = self.cell.owner.read().expect("poisoned object lock");
+        let kind = tx::classify_owner(&owner);
+        if !kind.is_shared_like() {
+            return Err(sui_move_call::CallArgError::ObjectKind {
+                object_id: self.object_id(),
+                expected: "shared",
+                actual: kind.label(),
+            });
+        };
+
+        let Some(initial_shared_version) = kind.shared_start_version() else {
+            return Err(sui_move_call::CallArgError::ObjectKind {
+                object_id: self.object_id(),
+                expected: "shared",
+                actual: kind.label(),
+            });
+        };
+
+        Ok(initial_shared_version)
+    }
+}
+
+impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for Object<T> {
+    fn to_call_arg(&self) -> Result<CallArg, sui_move_call::CallArgError> {
+        self.ensure_not_tombstoned()?;
 
         let owner = self.cell.owner.read().expect("poisoned object lock");
         match tx::classify_owner(&owner) {
@@ -223,7 +298,22 @@ impl<T> ReceivingObject<T> {
 
 impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for ReceivingObject<T> {
     fn to_call_arg(&self) -> Result<CallArg, sui_move_call::CallArgError> {
-        Ok(CallArg::Receiving(self.reference()))
+        let obj = Object::<T> {
+            cell: Arc::clone(&self.cell),
+            phantom: PhantomData,
+        };
+
+        obj.ensure_not_tombstoned()?;
+
+        let owner = obj.cell.owner.read().expect("poisoned object lock");
+        match tx::classify_owner(&owner) {
+            tx::OwnerKind::AddressOwned => Ok(CallArg::Receiving(self.reference())),
+            other => Err(sui_move_call::CallArgError::ObjectKind {
+                object_id: self.object_id(),
+                expected: "address-owned",
+                actual: other.label(),
+            }),
+        }
     }
 }
 
@@ -699,6 +789,52 @@ mod tests {
                 assert_eq!(object_id, id);
                 assert_eq!(expected, "immutable-or-owned or shared");
                 assert_eq!(actual, "child-object");
+            }
+            other => panic!("expected object kind error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn object_shared_mutable_view_is_explicit() {
+        let id = Address::from_hex("0x2").unwrap();
+        let reference = ObjectReference::new(id, 1, Digest::default());
+
+        let registry = Registry::default();
+        let obj: Object<Demo> = registry.intern_object(reference, Owner::Shared(7));
+
+        let shared_mut = obj.shared_mutable().unwrap();
+        let CallArg::Shared(shared) = shared_mut.to_call_arg().unwrap() else {
+            panic!("expected shared call arg")
+        };
+        assert_eq!(shared.object_id(), id);
+        assert_eq!(shared.version(), 7);
+        assert_eq!(shared.mutability(), Mutability::Mutable);
+    }
+
+    #[test]
+    fn object_receiving_view_requires_address_owned() {
+        let id = Address::from_hex("0x2").unwrap();
+        let owner = Address::from_hex("0x3").unwrap();
+        let reference = ObjectReference::new(id, 1, Digest::default());
+
+        let registry = Registry::default();
+        let obj: Object<Demo> = registry.intern_object(reference.clone(), Owner::Address(owner));
+
+        let recv = obj.receiving().unwrap();
+        let arg = recv.to_call_arg().unwrap();
+        assert_eq!(arg, CallArg::Receiving(reference.clone()));
+
+        let obj: Object<Demo> = registry.intern_object(reference.clone(), Owner::Shared(7));
+        let err = obj.receiving().unwrap_err();
+        match err {
+            sui_move_call::CallArgError::ObjectKind {
+                object_id,
+                expected,
+                actual,
+            } => {
+                assert_eq!(object_id, id);
+                assert_eq!(expected, "address-owned");
+                assert_eq!(actual, "shared");
             }
             other => panic!("expected object kind error, got {other:?}"),
         }
