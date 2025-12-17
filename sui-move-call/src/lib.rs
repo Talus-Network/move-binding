@@ -214,12 +214,46 @@ pub enum CallArgError {
     /// BCS encoding failed.
     #[error(transparent)]
     Bcs(#[from] bcs::Error),
+
+    /// The referenced object is tombstoned (e.g. deleted or wrapped).
+    ///
+    /// Higher layers may track object liveness across commits and refuse to use stale handles as
+    /// inputs.
+    #[error("object {object_id} is tombstoned ({reason})")]
+    Tombstoned {
+        /// Object id that was attempted to be used as an argument.
+        object_id: Address,
+        /// Human-readable reason (deleted, wrapped, not-exist, ...).
+        reason: &'static str,
+    },
+
+    /// The referenced object kind does not match what the conversion requires.
+    ///
+    /// This is primarily used by higher layers that classify on-chain ownership and choose the
+    /// correct Sui input mode (owned/immutable vs shared).
+    #[error("object {object_id} has kind {actual}, expected {expected}")]
+    ObjectKind {
+        /// Object id that was attempted to be used as an argument.
+        object_id: Address,
+        /// Expected kind label (input mode / ownership kind).
+        expected: &'static str,
+        /// Actual kind label (input mode / ownership kind).
+        actual: &'static str,
+    },
 }
 
 /// Convert a value into a `CallArg`.
 ///
 /// This is used to build `CallSpec` values ergonomically while keeping ownership simple: the
 /// conversion only needs an `&self`.
+///
+/// `ToCallArg` is intentionally generic:
+/// - for `T: MoveType`, it returns a `CallArg::Pure` by BCS-encoding the value
+/// - for object handle types, it returns the appropriate object input
+///
+/// Higher layers may implement `ToCallArg` for runtime-owned handles. Those implementations can
+/// fail even without BCS encoding errors (for example, if the handle is stale/tombstoned or if its
+/// on-chain kind makes it invalid for the requested input mode).
 ///
 /// # Example
 /// ```
@@ -343,6 +377,9 @@ impl CallSpec {
     }
 
     /// Append an argument by converting it into a `CallArg`.
+    ///
+    /// This can fail for BCS encoding errors (pure values) and, for higher-layer object handles,
+    /// for handle state errors (tombstoned/stale handles, kind mismatches, etc.).
     pub fn push_arg<A: ToCallArg>(&mut self, arg: &A) -> Result<(), CallArgError> {
         self.arguments.push(arg.to_call_arg()?);
         Ok(())
