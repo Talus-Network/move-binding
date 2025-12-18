@@ -214,6 +214,20 @@ All transaction actions take a sender address and are methods on a transaction b
 If checkpoint waiting times out, your transaction may still have executed. When effects are present
 in the receipt, the runtime already advanced its cursor before returning the receipt.
 
+If a receipt does not contain effects (for example, because it was persisted without them), you
+can recover by digest and advance the cursor explicitly:
+
+```rust,no_run
+use sui_move_runtime::prelude::*;
+
+# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, receipt: Receipt) -> Result<(), Error> {
+if receipt.effects.is_none() {
+    let _effects = rt.sync_transaction(receipt.digest).await?;
+}
+Ok(())
+# }
+```
+
 ```rust,no_run
 use sui_move_runtime::prelude::*;
 use std::time::Duration;

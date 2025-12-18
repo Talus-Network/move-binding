@@ -142,6 +142,25 @@ impl<S: SuiSigner> Runtime<S> {
         self.cursor.snapshot()
     }
 
+    /// Fetch transaction effects by digest and advance the runtime cursor.
+    ///
+    /// This is the recovery escape hatch for cases where you have a transaction digest but do not
+    /// have effects locally (for example, a receipt that was persisted without `effects`, or
+    /// a receipt returned by an RPC node that did not include `effects.bcs`).
+    ///
+    /// If the transaction effects are returned by RPC, the runtime derives an effects patch and
+    /// applies it to its cursor, updating any matching runtime-owned handles.
+    pub async fn sync_transaction(
+        &mut self,
+        digest: sui_sdk_types::Digest,
+    ) -> Result<Option<TransactionEffects>, Error> {
+        let effects = tx::fetch_transaction_effects(&mut self.client, digest).await?;
+        if let Some(effects) = &effects {
+            self.apply_patch(effects);
+        }
+        Ok(effects)
+    }
+
     /// Override the default checkpoint wait timeout used by [`Tx::commit`].
     pub fn with_wait_timeout(mut self, timeout: Duration) -> Self {
         self.wait_timeout = timeout;

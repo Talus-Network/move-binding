@@ -5,8 +5,9 @@ use sui_rpc::client::ExecuteAndWaitError;
 use sui_rpc::field::FieldMaskTree;
 use sui_rpc::proto::sui::rpc::v2::{
     simulate_transaction_request::TransactionChecks, transaction_kind, ExecuteTransactionRequest,
-    GetObjectRequest, ProgrammableTransaction as ProtoProgrammableTransaction,
-    SimulateTransactionRequest, SimulateTransactionResponse, Transaction as ProtoTransaction,
+    GetObjectRequest, GetTransactionRequest,
+    ProgrammableTransaction as ProtoProgrammableTransaction, SimulateTransactionRequest,
+    SimulateTransactionResponse, Transaction as ProtoTransaction,
     TransactionKind as ProtoTransactionKind,
 };
 use sui_rpc::proto::TryFromProtoError;
@@ -530,6 +531,29 @@ pub(crate) async fn submit_and_wait<S: SuiSigner>(
         observed_finality,
         checkpoint_wait,
     )
+}
+
+pub(crate) async fn fetch_transaction_effects(
+    client: &mut sui_rpc::Client,
+    digest: Digest,
+) -> Result<Option<TransactionEffects>, TxError> {
+    let mut req = GetTransactionRequest::new(&digest);
+    let mut mask = FieldMaskTree::default();
+    for path in ["digest", "effects.bcs"] {
+        mask.add_field_path(path);
+    }
+    req.read_mask = Some(mask.to_field_mask());
+
+    let resp = client
+        .ledger_client()
+        .get_transaction(req)
+        .await
+        .map_err(|e| TxError::Execute(format!("get_transaction rpc error: {e}")))?
+        .into_inner();
+
+    let executed = resp.transaction.ok_or(TxError::MissingExecuted)?;
+    let (effects, _) = decode_effects_and_status(&executed)?;
+    Ok(effects)
 }
 
 async fn select_gas_coin(
