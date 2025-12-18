@@ -8,19 +8,36 @@ building or executing transactions.
 
 ## Where it fits
 
-`sui-move-call` sits directly above `sui-move`: it uses `MoveType`/`MoveStruct` to build
-type-checked call descriptions (`CallSpec`). Transaction-building and execution are intentionally
-out of scope here.
+`sui-move-call` is the “Call” layer in the repository’s Read → Tx → Commit mental model (`MODEL.md`):
+
+- **Read** (runtime) fetches objects and classifies on-chain ownership.
+- **Call** (this crate) describes *what* to call and how to encode arguments.
+- **PTB** builds a `ProgrammableTransaction` from a `CallSpec`.
+- **Commit** (runtime) submits and applies effects to advance the cursor.
+
+This crate sits directly above `sui-move`: it uses `MoveType`/`MoveStruct` to build type-checked
+call descriptions (`CallSpec`). Transaction-building and execution are intentionally out of scope.
 
 ## Core types
 
 - `CallSpec`: `(package, module, function)` + type arguments + call arguments
 - `CallArg`: canonical call-argument representation (re-export of `sui_sdk_types::Input`)
 - `ToCallArg`: convert values into `CallArg` without consuming them
-- `ObjectArg<T>`: marker trait for typed object arguments across input kinds
 - `MoveObject<T>`: typed handle for `Input::ImmutableOrOwned(ObjectReference)`
 - `SharedMoveObject<T>`: typed handle for `Input::Shared(SharedInput)`
 - `ReceivingMoveObject<T>`: typed handle for `Input::Receiving(ObjectReference)`
+
+Note: `ToCallArg` can fail even when BCS encoding is not involved (for example, higher layers can
+refuse to convert tombstoned handles or invalid owner kinds into object inputs).
+
+## Receiving is an input mode (not ownership)
+
+Sui's “receiving” is a distinct **transaction input mode**. It corresponds to the Move framework
+type `sui::transfer::Receiving<T>`: an ephemeral per-transaction “receiving ticket” consumed by
+`sui::transfer::receive`/`public_receive`.
+
+It is not an on-chain owner kind, and this crate does not attempt to prove that a given reference
+is valid to receive. It only models the correct wire shape (`Input::Receiving(ObjectReference)`).
 
 ## Argument mapping
 
@@ -37,18 +54,6 @@ immutable/owned and receiving inputs use full `ObjectReference`s.
 
 If you need an input kind that doesn't have a typed wrapper here (for example
 `CallArg::FundsWithdrawal(..)`), use `CallSpec::push_input`.
-
-## `ObjectArg<T>` (why it exists)
-
-Sui has multiple object input kinds (owned/immutable vs shared vs receiving), but you often want to
-write interface functions that are typed over the *Move* object type `T` and accept any of those
-kinds.
-
-`ObjectArg<T>` is a tiny marker trait that keeps the type `T` in the function signature while
-remaining agnostic about which concrete object-handle wrapper the caller has.
-
-It is especially useful for code generation: generated call stubs can accept `&impl ObjectArg<T>`
-to preserve type inference for generic object types.
 
 ## Example: a typed interface function
 

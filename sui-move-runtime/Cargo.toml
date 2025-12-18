@@ -8,6 +8,7 @@ readme = "README.md"
 [dependencies]
 thiserror = { workspace = true }
 sui-sdk-types = { workspace = true }
+serde = { workspace = true }
 sui-move = { path = "../sui-move" }
 sui-move-call = { path = "../sui-move-call" }
 sui-move-ptb = { path = "../sui-move-ptb" }
@@ -15,4 +16,5 @@ sui-rpc = { workspace = true }
 sui-crypto = { workspace = true }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 sui-move = { path = "../sui-move", features = ["derive"] }

@@ -8,7 +8,8 @@ fits the layered `sui-move*` stack.
 - `sui-move`: Move-shaped types (`MoveType`, `MoveStruct`, abilities)
 - `sui-move-call`: `CallSpec` + typed argument traits (`ToCallArg`, `ObjectArg<T>`)
 - `sui-move-ptb`: build a Sui programmable transaction (PTB) from `CallSpec`
-- `sui-move-runtime`: “Rust-time vs Move-time” runtime + auto-updating object handles
+- `sui-move-runtime`: cursor-driven runtime for the Read → Tx → Commit mental model + auto-updating
+  object handles
 - `sui-move-codegen` (this crate): generate the bindings (types + call builders)
 
 ## Problem
@@ -46,7 +47,7 @@ Given a `NormalizedPackage` (either fetched from gRPC or loaded from JSON), this
 
 Those generated call builders are designed to be used directly in higher layers:
 - `sui-move-ptb` can consume `CallSpec` to build a `ProgrammableTransaction`
-- `sui-move-runtime` can consume `CallSpec` via `move_time!` / `simulate_time!` / `inspect_time!`
+- `sui-move-runtime` can consume `CallSpec` via its tx builder (or `sui_move_runtime::tx!`)
 
 ## Example: render from an in-memory IR
 

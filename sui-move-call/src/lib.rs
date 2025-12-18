@@ -153,8 +153,14 @@ impl<T: MoveStruct + HasKey> SharedMoveObject<T> {
 
 /// Typed handle for a "receiving" object argument.
 ///
-/// Receiving objects are passed as an [`ObjectReference`], but their semantics differ from normal
-/// immutable-or-owned object inputs.
+/// This corresponds to Sui's `Input::Receiving(ObjectReference)`.
+///
+/// Receiving is a **transaction input mode**, not an on-chain owner kind. It is used for the Move
+/// framework concept `sui::transfer::Receiving<T>`: an ephemeral per-transaction “receiving
+/// ticket” that can be consumed by `sui::transfer::receive`/`public_receive`.
+///
+/// This wrapper does not validate whether the referenced object can be received in the current
+/// transaction; invalid uses are rejected by Sui.
 ///
 /// # Example
 /// ```
@@ -208,12 +214,46 @@ pub enum CallArgError {
     /// BCS encoding failed.
     #[error(transparent)]
     Bcs(#[from] bcs::Error),
+
+    /// The referenced object is tombstoned (e.g. deleted or wrapped).
+    ///
+    /// Higher layers may track object liveness across commits and refuse to use stale handles as
+    /// inputs.
+    #[error("object {object_id} is tombstoned ({reason})")]
+    Tombstoned {
+        /// Object id that was attempted to be used as an argument.
+        object_id: Address,
+        /// Human-readable reason (deleted, wrapped, not-exist, ...).
+        reason: &'static str,
+    },
+
+    /// The referenced object kind does not match what the conversion requires.
+    ///
+    /// This is primarily used by higher layers that classify on-chain ownership and choose the
+    /// correct Sui input mode (owned/immutable vs shared).
+    #[error("object {object_id} has kind {actual}, expected {expected}")]
+    ObjectKind {
+        /// Object id that was attempted to be used as an argument.
+        object_id: Address,
+        /// Expected kind label (input mode / ownership kind).
+        expected: &'static str,
+        /// Actual kind label (input mode / ownership kind).
+        actual: &'static str,
+    },
 }
 
 /// Convert a value into a `CallArg`.
 ///
 /// This is used to build `CallSpec` values ergonomically while keeping ownership simple: the
 /// conversion only needs an `&self`.
+///
+/// `ToCallArg` is intentionally generic:
+/// - for `T: MoveType`, it returns a `CallArg::Pure` by BCS-encoding the value
+/// - for object handle types, it returns the appropriate object input
+///
+/// Higher layers may implement `ToCallArg` for runtime-owned handles. Those implementations can
+/// fail even without BCS encoding errors (for example, if the handle is stale/tombstoned or if its
+/// on-chain kind makes it invalid for the requested input mode).
 ///
 /// # Example
 /// ```
@@ -230,42 +270,6 @@ pub trait ToCallArg {
     fn to_call_arg(&self) -> Result<CallArg, CallArgError>;
 }
 
-/// Typed object argument for a Move `key` type.
-///
-/// This is a tiny marker trait used to preserve the Move type `T` at the Rust type level while
-/// staying agnostic over Sui's concrete object input kind (immutable/owned vs shared vs
-/// receiving).
-///
-/// It is implemented by the typed object-handle wrappers in this crate:
-/// - [`MoveObject<T>`] (`Input::ImmutableOrOwned`)
-/// - [`SharedMoveObject<T>`] (`Input::Shared`)
-/// - [`ReceivingMoveObject<T>`] (`Input::Receiving`)
-///
-/// Higher layers (like `sui-move-runtime`) can implement it for their own handle types.
-///
-/// This trait is especially useful for code generation: generated bindings can accept
-/// `&impl ObjectArg<MyType>` to enable type inference for generic object types, while remaining
-/// compatible with multiple runtime layers.
-///
-/// # Example
-/// ```
-/// use sui_move_call::{CallSpec, ObjectArg, ToCallArg};
-/// use sui_sdk_types::Address;
-///
-/// #[sui_move::move_struct(address = "0x1", module = "m", abilities = "key")]
-/// struct S {
-///     id: sui_move::types::UID,
-/// }
-///
-/// fn touch(obj: &impl ObjectArg<S>) -> CallSpec {
-///     let package: Address = "0x1".parse().unwrap();
-///     let mut spec = CallSpec::new(package, "m", "touch").unwrap();
-///     spec.push_input(obj.to_call_arg().unwrap());
-///     spec
-/// }
-/// ```
-pub trait ObjectArg<T: MoveStruct + HasKey>: ToCallArg {}
-
 impl<T: MoveType> ToCallArg for T {
     fn to_call_arg(&self) -> Result<CallArg, CallArgError> {
         Ok(CallArg::Pure(self.to_bcs()?))
@@ -278,23 +282,17 @@ impl<T: MoveStruct + HasKey> ToCallArg for MoveObject<T> {
     }
 }
 
-impl<T: MoveStruct + HasKey> ObjectArg<T> for MoveObject<T> {}
-
 impl<T: MoveStruct + HasKey> ToCallArg for SharedMoveObject<T> {
     fn to_call_arg(&self) -> Result<CallArg, CallArgError> {
         Ok(CallArg::Shared(self.input.clone()))
     }
 }
 
-impl<T: MoveStruct + HasKey> ObjectArg<T> for SharedMoveObject<T> {}
-
 impl<T: MoveStruct + HasKey> ToCallArg for ReceivingMoveObject<T> {
     fn to_call_arg(&self) -> Result<CallArg, CallArgError> {
         Ok(CallArg::Receiving(self.reference().clone()))
     }
 }
-
-impl<T: MoveStruct + HasKey> ObjectArg<T> for ReceivingMoveObject<T> {}
 
 /// Errors that can occur when constructing a `CallSpec`.
 #[derive(thiserror::Error, Debug)]
@@ -379,6 +377,9 @@ impl CallSpec {
     }
 
     /// Append an argument by converting it into a `CallArg`.
+    ///
+    /// This can fail for BCS encoding errors (pure values) and, for higher-layer object handles,
+    /// for handle state errors (tombstoned/stale handles, kind mismatches, etc.).
     pub fn push_arg<A: ToCallArg>(&mut self, arg: &A) -> Result<(), CallArgError> {
         self.arguments.push(arg.to_call_arg()?);
         Ok(())
@@ -396,7 +397,7 @@ impl CallSpec {
 /// Convenience re-exports for downstream code.
 pub mod prelude {
     pub use crate::{
-        CallArg, CallArgError, CallSpec, CallSpecError, MoveObject, ObjectArg, ReceivingMoveObject,
+        CallArg, CallArgError, CallSpec, CallSpecError, MoveObject, ReceivingMoveObject,
         SharedMoveObject, ToCallArg,
     };
     pub use sui_move::prelude::*;

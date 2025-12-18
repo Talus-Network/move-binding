@@ -5,18 +5,28 @@ use sui_rpc::client::ExecuteAndWaitError;
 use sui_rpc::field::FieldMaskTree;
 use sui_rpc::proto::sui::rpc::v2::{
     simulate_transaction_request::TransactionChecks, transaction_kind, ExecuteTransactionRequest,
-    GetObjectRequest, ProgrammableTransaction as ProtoProgrammableTransaction,
-    SimulateTransactionRequest, SimulateTransactionResponse, Transaction as ProtoTransaction,
+    GetObjectRequest, GetTransactionRequest,
+    ProgrammableTransaction as ProtoProgrammableTransaction, SimulateTransactionRequest,
+    SimulateTransactionResponse, Transaction as ProtoTransaction,
     TransactionKind as ProtoTransactionKind,
 };
 use sui_rpc::proto::TryFromProtoError;
 use sui_sdk_types::{
-    Address, Digest, GasPayment, ObjectReference, Owner, StructTag, Transaction as SdkTransaction,
-    TransactionEffects, TransactionExpiration, TransactionKind, TypeTag, UserSignature,
+    Address, Digest, ExecutionStatus, GasPayment, ObjectReference, Owner, StructTag,
+    Transaction as SdkTransaction, TransactionEffects, TransactionExpiration, TransactionKind,
+    TypeTag, UserSignature,
 };
 
+#[derive(Clone, Debug)]
+pub(crate) struct FetchedMoveObject {
+    pub(crate) reference: ObjectReference,
+    pub(crate) owner: Owner,
+    pub(crate) struct_tag: StructTag,
+    pub(crate) contents: Vec<u8>,
+}
+
 /// Additional transaction options for submitting a PTB.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TxOptions {
     /// Optional sponsor address (gas owner). Defaults to sender.
     pub sponsor: Option<Address>,
@@ -28,6 +38,60 @@ pub struct TxOptions {
     pub gas_price: Option<u64>,
     /// Optional explicit expiration (TTL). Defaults to `None`.
     pub expiration: Option<TransactionExpiration>,
+    /// Finality requested for the commit.
+    ///
+    /// When `Checkpointed` (default), `commit*` uses an RPC method that also waits for checkpoint
+    /// inclusion ("read-your-writes" consistency on that node).
+    ///
+    /// When `Executed`, `commit*` should only require execution (effects produced).
+    pub finality: Finality,
+}
+
+/// Transaction finality requested by the caller.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Finality {
+    /// Only require that the transaction was executed (effects produced).
+    Executed,
+    /// Also wait for the transaction to be observed in a checkpoint on the connected RPC node.
+    Checkpointed,
+}
+
+impl Default for TxOptions {
+    fn default() -> Self {
+        Self {
+            sponsor: None,
+            gas: None,
+            gas_budget: None,
+            gas_price: None,
+            expiration: None,
+            finality: Finality::Checkpointed,
+        }
+    }
+}
+
+/// Finality actually observed by the runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObservedFinality {
+    /// Transaction was executed (digest known), but checkpoint inclusion was not confirmed.
+    Executed,
+    /// Transaction was observed in a checkpoint.
+    Checkpointed,
+}
+
+/// Outcome of waiting for checkpoint inclusion.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CheckpointWaitOutcome {
+    /// The runtime did not request checkpoint waiting.
+    NotRequested,
+    /// Checkpoint inclusion was confirmed.
+    Ok,
+    /// Checkpoint wait timed out.
+    Timeout,
+    /// Checkpoint stream returned an error.
+    StreamError {
+        /// Checkpoint stream error message.
+        error: String,
+    },
 }
 
 /// Receipt for a submitted transaction.
@@ -37,8 +101,40 @@ pub struct Receipt {
     pub digest: Digest,
     /// Transaction effects, if returned by RPC.
     pub effects: Option<TransactionEffects>,
+    /// Execution status, if known.
+    pub status: Option<ExecutionStatus>,
     /// The user signature used for submission.
     pub signature: UserSignature,
+    /// Finality requested by the caller.
+    pub requested_finality: Finality,
+    /// Finality observed by the runtime.
+    pub observed_finality: ObservedFinality,
+    /// Outcome of waiting for checkpoint inclusion.
+    pub checkpoint_wait: CheckpointWaitOutcome,
+}
+
+/// Error returned by [`Receipt::ensure_success`].
+#[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
+pub enum EnsureSuccessError {
+    /// The receipt does not contain an execution status.
+    #[error("transaction execution status is unknown")]
+    UnknownStatus,
+    /// The transaction executed with failure.
+    #[error("transaction execution failed: {0:?}")]
+    Failure(Box<ExecutionStatus>),
+}
+
+impl Receipt {
+    /// Return `Ok(())` if the transaction executed successfully.
+    ///
+    /// Failed transactions are still committed on-chain and may update gas references.
+    pub fn ensure_success(&self) -> Result<(), EnsureSuccessError> {
+        match &self.status {
+            Some(ExecutionStatus::Success) => Ok(()),
+            Some(status) => Err(EnsureSuccessError::Failure(Box::new(status.clone()))),
+            None => Err(EnsureSuccessError::UnknownStatus),
+        }
+    }
 }
 
 /// Options for running a transaction in dry-run mode (checks enabled).
@@ -75,7 +171,7 @@ pub struct InspectOptions {}
 
 /// Receipt for a simulated transaction (dry-run).
 ///
-/// Returned by [`crate::MoveTime::simulate`]. This does not mutate chain state and does not update
+/// Returned by [`crate::Tx::simulate`]. This does not mutate chain state and does not update
 /// runtime-owned handles.
 #[derive(Clone, Debug)]
 pub struct SimulationReceipt {
@@ -87,7 +183,7 @@ pub struct SimulationReceipt {
 
 /// Receipt for a dev-inspected transaction (checks disabled) including command outputs.
 ///
-/// Returned by [`crate::MoveTime::inspect`]. This does not mutate chain state and does not update
+/// Returned by [`crate::Tx::inspect`]. This does not mutate chain state and does not update
 /// runtime-owned handles.
 ///
 /// `outputs[i]` corresponds to the `i`-th PTB command.
@@ -159,6 +255,13 @@ pub enum TxError {
     /// Gas selection failed (no gas coin or RPC error).
     #[error("select gas: {0}")]
     Gas(String),
+
+    /// The requested finality is not supported by this commit path.
+    #[error("unsupported finality: {requested:?}")]
+    UnsupportedFinality {
+        /// Finality requested by the caller.
+        requested: Finality,
+    },
 }
 
 /// Errors for simulate/dev-inspect operations.
@@ -189,12 +292,15 @@ pub enum RpcError {
     /// Failed to convert protobuf object.
     #[error("proto conversion: {0}")]
     Proto(String),
+    /// Object is a package, not a Move struct object.
+    #[error("object {0} is a package, expected a Move struct object")]
+    NotMoveStruct(Address),
 }
 
 pub(crate) async fn fetch_object_reference_and_owner(
     client: &mut sui_rpc::Client,
     id: Address,
-) -> Result<(ObjectReference, Owner), RpcError> {
+) -> Result<FetchedMoveObject, RpcError> {
     let mut req = GetObjectRequest::new(&id);
     let mut mask = FieldMaskTree::default();
     for path in [
@@ -230,43 +336,70 @@ pub(crate) async fn fetch_object_reference_and_owner(
         .try_into()
         .map_err(|e: TryFromProtoError| RpcError::Proto(e.to_string()))?;
 
-    Ok((reference, *sui_obj.owner()))
+    let move_struct = sui_obj
+        .as_struct()
+        .ok_or(RpcError::NotMoveStruct(*reference.object_id()))?;
+
+    Ok(FetchedMoveObject {
+        reference,
+        owner: *sui_obj.owner(),
+        struct_tag: move_struct.object_type().clone(),
+        contents: move_struct.contents().to_vec(),
+    })
 }
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum OwnerKind {
-    ImmutableOrOwned,
-    SharedLike,
+    Immutable,
+    AddressOwned,
+    ChildObject,
+    Shared { initial_shared_version: u64 },
+    ConsensusAddress { start_version: u64 },
     Unknown,
 }
 
 impl OwnerKind {
     pub(crate) fn label(self) -> &'static str {
         match self {
-            OwnerKind::ImmutableOrOwned => "immutable-or-owned",
-            OwnerKind::SharedLike => "shared",
+            OwnerKind::Immutable => "immutable",
+            OwnerKind::AddressOwned => "address-owned",
+            OwnerKind::ChildObject => "child-object",
+            OwnerKind::Shared { .. } => "shared",
+            OwnerKind::ConsensusAddress { .. } => "consensus-address-owned",
             OwnerKind::Unknown => "unknown",
         }
     }
 
     pub(crate) fn is_shared_like(self) -> bool {
-        matches!(self, OwnerKind::SharedLike | OwnerKind::Unknown)
+        matches!(
+            self,
+            OwnerKind::Shared { .. } | OwnerKind::ConsensusAddress { .. }
+        )
+    }
+
+    pub(crate) fn shared_start_version(self) -> Option<u64> {
+        match self {
+            OwnerKind::Shared {
+                initial_shared_version,
+            } => Some(initial_shared_version),
+            OwnerKind::ConsensusAddress { start_version, .. } => Some(start_version),
+            _ => None,
+        }
     }
 }
 
 pub(crate) fn classify_owner(owner: &Owner) -> OwnerKind {
     match owner {
-        Owner::Shared(_) | Owner::ConsensusAddress { .. } => OwnerKind::SharedLike,
-        Owner::Immutable | Owner::Address(_) | Owner::Object(_) => OwnerKind::ImmutableOrOwned,
+        Owner::Immutable => OwnerKind::Immutable,
+        Owner::Address(_) => OwnerKind::AddressOwned,
+        Owner::Object(_) => OwnerKind::ChildObject,
+        Owner::Shared(initial_shared_version) => OwnerKind::Shared {
+            initial_shared_version: *initial_shared_version,
+        },
+        Owner::ConsensusAddress { start_version, .. } => OwnerKind::ConsensusAddress {
+            start_version: *start_version,
+        },
         _ => OwnerKind::Unknown,
-    }
-}
-
-pub(crate) fn shared_version_from_owner(owner: &Owner) -> Option<u64> {
-    match owner {
-        Owner::Shared(v) => Some(*v),
-        Owner::ConsensusAddress { start_version, .. } => Some(*start_version),
-        _ => None,
     }
 }
 
@@ -319,37 +452,108 @@ pub(crate) async fn submit_and_wait<S: SuiSigner>(
     // If no mask is provided, the server defaults to `effects.status,checkpoint` which does not
     // include the BCS bytes.
     let mut mask = FieldMaskTree::default();
+    for path in ["digest", "effects.bcs", "effects.status", "checkpoint"] {
+        mask.add_field_path(path);
+    }
+    req.read_mask = Some(mask.to_field_mask());
+
+    let requested_finality = opts.finality;
+
+    let (executed, checkpoint_wait, observed_finality) = match requested_finality {
+        Finality::Checkpointed => {
+            let (response, checkpoint_wait, observed_finality) = match client
+                .execute_transaction_and_wait_for_checkpoint(req, timeout)
+                .await
+            {
+                Ok(response) => (
+                    response,
+                    CheckpointWaitOutcome::Ok,
+                    ObservedFinality::Checkpointed,
+                ),
+                Err(ExecuteAndWaitError::CheckpointTimeout(response)) => (
+                    response,
+                    CheckpointWaitOutcome::Timeout,
+                    ObservedFinality::Executed,
+                ),
+                Err(ExecuteAndWaitError::CheckpointStreamError { response, error }) => (
+                    response,
+                    CheckpointWaitOutcome::StreamError {
+                        error: error.to_string(),
+                    },
+                    ObservedFinality::Executed,
+                ),
+                Err(err) => {
+                    return Err(map_execute_wait_error(
+                        err,
+                        "execute_transaction_and_wait_for_checkpoint",
+                    ))
+                }
+            };
+
+            let executed = response
+                .into_inner()
+                .transaction
+                .ok_or(TxError::MissingExecuted)?;
+
+            (executed, checkpoint_wait, observed_finality)
+        }
+        Finality::Executed => {
+            let response = client
+                .execution_client()
+                .execute_transaction(req)
+                .await
+                .map_err(|e| TxError::Execute(format!("execute_transaction rpc error: {e}")))?;
+
+            let executed = response
+                .into_inner()
+                .transaction
+                .ok_or(TxError::MissingExecuted)?;
+
+            let observed_finality = if executed.checkpoint.is_some() {
+                ObservedFinality::Checkpointed
+            } else {
+                ObservedFinality::Executed
+            };
+
+            (
+                executed,
+                CheckpointWaitOutcome::NotRequested,
+                observed_finality,
+            )
+        }
+    };
+
+    receipt_from_executed(
+        executed,
+        tx.digest(),
+        signature,
+        requested_finality,
+        observed_finality,
+        checkpoint_wait,
+    )
+}
+
+pub(crate) async fn fetch_transaction_effects(
+    client: &mut sui_rpc::Client,
+    digest: Digest,
+) -> Result<Option<TransactionEffects>, TxError> {
+    let mut req = GetTransactionRequest::new(&digest);
+    let mut mask = FieldMaskTree::default();
     for path in ["digest", "effects.bcs"] {
         mask.add_field_path(path);
     }
     req.read_mask = Some(mask.to_field_mask());
 
-    let executed = client
-        .execute_transaction_and_wait_for_checkpoint(req, timeout)
+    let resp = client
+        .ledger_client()
+        .get_transaction(req)
         .await
-        .map_err(|e| map_execute_wait_error(e, "execute_transaction_and_wait_for_checkpoint"))?
-        .into_inner()
-        .transaction
-        .ok_or(TxError::MissingExecuted)?;
+        .map_err(|e| TxError::Execute(format!("get_transaction rpc error: {e}")))?
+        .into_inner();
 
-    let digest = executed
-        .digest
-        .as_deref()
-        .and_then(|d| d.parse::<Digest>().ok())
-        .unwrap_or_else(|| tx.digest());
-
-    let effects = executed
-        .effects
-        .as_ref()
-        .map(TransactionEffects::try_from)
-        .transpose()
-        .map_err(|e: TryFromProtoError| TxError::Proto(e.to_string()))?;
-
-    Ok(Receipt {
-        digest,
-        effects,
-        signature,
-    })
+    let executed = resp.transaction.ok_or(TxError::MissingExecuted)?;
+    let (effects, _) = decode_effects_and_status(&executed)?;
+    Ok(effects)
 }
 
 async fn select_gas_coin(
@@ -383,14 +587,62 @@ fn map_execute_wait_error(err: ExecuteAndWaitError, context_label: &'static str)
         ExecuteAndWaitError::MissingTransaction => {
             TxError::Execute(format!("{context_label} missing transaction in request"))
         }
-        ExecuteAndWaitError::CheckpointTimeout(_) => {
-            TxError::Execute(format!("{context_label} timed out waiting for checkpoint"))
-        }
-        ExecuteAndWaitError::CheckpointStreamError { error, .. } => {
-            TxError::Execute(format!("{context_label} checkpoint stream error: {error}"))
-        }
         _ => TxError::Execute(format!("{context_label} unexpected error")),
     }
+}
+
+fn receipt_from_executed(
+    executed: sui_rpc::proto::sui::rpc::v2::ExecutedTransaction,
+    fallback_digest: Digest,
+    signature: UserSignature,
+    requested_finality: Finality,
+    observed_finality: ObservedFinality,
+    checkpoint_wait: CheckpointWaitOutcome,
+) -> Result<Receipt, TxError> {
+    let digest = executed
+        .digest
+        .as_deref()
+        .and_then(|d| d.parse::<Digest>().ok())
+        .unwrap_or(fallback_digest);
+
+    let (effects, status) = decode_effects_and_status(&executed)?;
+
+    Ok(Receipt {
+        digest,
+        effects,
+        status,
+        signature,
+        requested_finality,
+        observed_finality,
+        checkpoint_wait,
+    })
+}
+
+fn decode_effects_and_status(
+    executed: &sui_rpc::proto::sui::rpc::v2::ExecutedTransaction,
+) -> Result<(Option<TransactionEffects>, Option<ExecutionStatus>), TxError> {
+    let proto_effects = executed.effects.as_ref();
+
+    let status_from_proto = proto_effects
+        .and_then(|fx| fx.status.as_ref())
+        .map(ExecutionStatus::try_from)
+        .transpose()
+        .map_err(|e: TryFromProtoError| TxError::Proto(e.to_string()))?;
+
+    let effects = match proto_effects {
+        Some(proto) if proto.bcs.is_some() => Some(
+            TransactionEffects::try_from(proto)
+                .map_err(|e: TryFromProtoError| TxError::Proto(e.to_string()))?,
+        ),
+        _ => None,
+    };
+
+    let status = effects
+        .as_ref()
+        .map(|fx| fx.status().clone())
+        .or(status_from_proto);
+
+    Ok((effects, status))
 }
 
 pub(crate) async fn simulate_ptb(
@@ -540,6 +792,17 @@ fn bcs_value_from_command_output(
 mod tests {
     use super::*;
 
+    fn dummy_signature() -> UserSignature {
+        let signature =
+            sui_sdk_types::Ed25519Signature::new([0; sui_sdk_types::Ed25519Signature::LENGTH]);
+        let public_key =
+            sui_sdk_types::Ed25519PublicKey::new([0; sui_sdk_types::Ed25519PublicKey::LENGTH]);
+        UserSignature::Simple(sui_sdk_types::SimpleSignature::Ed25519 {
+            signature,
+            public_key,
+        })
+    }
+
     #[test]
     fn simulate_receipt_decodes_effects() {
         let effects = TransactionEffects::V2(Box::new(sui_sdk_types::TransactionEffectsV2 {
@@ -601,5 +864,81 @@ mod tests {
             receipt.outputs[0].return_values[0].bytes,
             10u64.to_le_bytes().to_vec()
         );
+    }
+
+    #[test]
+    fn receipt_reports_checkpoint_wait_outcome_without_losing_effects() {
+        let effects = TransactionEffects::V2(Box::new(sui_sdk_types::TransactionEffectsV2 {
+            status: ExecutionStatus::Failure {
+                error: sui_sdk_types::ExecutionError::InvariantViolation,
+                command: None,
+            },
+            epoch: 0,
+            gas_used: sui_sdk_types::GasCostSummary::new(0, 0, 0, 0),
+            transaction_digest: Digest::default(),
+            gas_object_index: None,
+            events_digest: None,
+            dependencies: vec![],
+            lamport_version: 1,
+            changed_objects: vec![],
+            unchanged_consensus_objects: vec![],
+            auxiliary_data_digest: None,
+        }));
+
+        let bcs = sui_rpc::proto::sui::rpc::v2::Bcs::serialize(&effects).unwrap();
+        let mut proto_effects = sui_rpc::proto::sui::rpc::v2::TransactionEffects::default();
+        proto_effects.bcs = Some(bcs);
+
+        let mut executed = sui_rpc::proto::sui::rpc::v2::ExecutedTransaction::default();
+        executed.digest = Some(Digest::default().to_string());
+        executed.effects = Some(proto_effects);
+
+        let signature = dummy_signature();
+        let receipt = receipt_from_executed(
+            executed,
+            Digest::default(),
+            signature.clone(),
+            Finality::Checkpointed,
+            ObservedFinality::Executed,
+            CheckpointWaitOutcome::Timeout,
+        )
+        .unwrap();
+
+        assert_eq!(receipt.requested_finality, Finality::Checkpointed);
+        assert_eq!(receipt.observed_finality, ObservedFinality::Executed);
+        assert_eq!(receipt.checkpoint_wait, CheckpointWaitOutcome::Timeout);
+        assert_eq!(receipt.signature, signature);
+        assert!(receipt.effects.is_some());
+        assert!(matches!(
+            receipt.ensure_success(),
+            Err(EnsureSuccessError::Failure(_))
+        ));
+    }
+
+    #[test]
+    fn receipt_can_surface_status_without_effects_bcs() {
+        let mut proto_status = sui_rpc::proto::sui::rpc::v2::ExecutionStatus::default();
+        proto_status.success = Some(true);
+
+        let mut proto_effects = sui_rpc::proto::sui::rpc::v2::TransactionEffects::default();
+        proto_effects.status = Some(proto_status);
+
+        let mut executed = sui_rpc::proto::sui::rpc::v2::ExecutedTransaction::default();
+        executed.digest = Some(Digest::default().to_string());
+        executed.effects = Some(proto_effects);
+
+        let receipt = receipt_from_executed(
+            executed,
+            Digest::default(),
+            dummy_signature(),
+            Finality::Checkpointed,
+            ObservedFinality::Executed,
+            CheckpointWaitOutcome::Timeout,
+        )
+        .unwrap();
+
+        assert!(receipt.effects.is_none());
+        assert_eq!(receipt.status, Some(ExecutionStatus::Success));
+        assert_eq!(receipt.ensure_success(), Ok(()));
     }
 }

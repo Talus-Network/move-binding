@@ -46,6 +46,13 @@ Because inputs live in a shared table, it’s common to reference the same input
 (especially the same object handle across multiple Move calls). `PtbBuilder` reuses identical
 inputs to keep PTBs compact and make reuse natural.
 
+Additional rules for object inputs:
+
+- Shared inputs are unified by `(object_id, initial_shared_version)` and upgraded to the most
+  permissive mutability mode when the same shared object is added multiple times.
+- Duplicate object ids across input objects and receiving objects are rejected early (matching
+  Sui’s `DuplicateObjectRefInput` class of errors).
+
 Exception: `Input::FundsWithdrawal` is intentionally **not** deduplicated (duplicates can be
 meaningful).
 
@@ -127,6 +134,81 @@ let pt = ptb(|tx| {
 // inputs: vault-object, 1u64, 2u64 (vault input is reused)
 assert_eq!(pt.inputs.len(), 3);
 assert_eq!(pt.commands.len(), 2);
+```
+
+## Example: shared mutability upgrade
+
+Shared object inputs are unified by `(object_id, initial_shared_version)`. If the same shared
+object is added multiple times with different mutability, `PtbBuilder` upgrades to the most
+permissive mode and reuses the same input index.
+
+```rust
+use std::str::FromStr;
+use sui_move_call::{CallArg, SharedMoveObject};
+use sui_move_ptb::PtbBuilder;
+use sui_sdk_types::{Address, Argument, Mutability};
+
+#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+struct Thing {
+    id: sui_move::types::UID,
+}
+
+let object_id = Address::from_str("0x2").unwrap();
+let initial_shared_version = 7u64;
+
+let imm = SharedMoveObject::<Thing>::immutable(object_id, initial_shared_version);
+let mut_ = SharedMoveObject::<Thing>::mutable(object_id, initial_shared_version);
+
+let mut tx = PtbBuilder::new();
+let a0 = tx.arg(&imm).unwrap();
+let a1 = tx.arg(&mut_).unwrap();
+
+assert_eq!(a0, Argument::Input(0));
+assert_eq!(a1, Argument::Input(0));
+
+let shared = match &tx.inputs()[0] {
+    CallArg::Shared(shared) => shared,
+    _ => panic!("expected shared input"),
+};
+assert_eq!(shared.object_id(), object_id);
+assert_eq!(shared.version(), initial_shared_version);
+assert_eq!(shared.mutability(), Mutability::Mutable);
+```
+
+## Example: receiving inputs and duplicate object ids
+
+Receiving is a distinct transaction input mode (`Input::Receiving(ObjectReference)`). Sui rejects
+transactions that refer to the same object id more than once across object inputs (including
+receiving). `PtbBuilder` detects this early.
+
+```rust
+use std::str::FromStr;
+use sui_move_call::{CallArg, MoveObject, ReceivingMoveObject};
+use sui_move_ptb::{BuildError, PtbBuilder};
+use sui_sdk_types::{Address, Digest, ObjectReference};
+
+#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+struct Thing {
+    id: sui_move::types::UID,
+}
+
+let object_id = Address::from_str("0x2").unwrap();
+
+let owned_ref = ObjectReference::new(object_id, 1, Digest::default());
+let owned = MoveObject::<Thing>::new(owned_ref);
+
+let recv_ref = ObjectReference::new(object_id, 1, Digest::default());
+let receiving = ReceivingMoveObject::<Thing>::new(recv_ref);
+
+let mut tx = PtbBuilder::new();
+tx.arg(&owned).unwrap();
+
+let err = tx.arg(&receiving).unwrap_err();
+assert!(matches!(err, BuildError::DuplicateObjectRefInput { object_id: id } if id == object_id));
+
+let mut tx2 = PtbBuilder::new();
+tx2.arg(&receiving).unwrap();
+assert!(matches!(&tx2.inputs()[0], CallArg::Receiving(_)));
 ```
 
 ## Example: use the `ptb!` macro

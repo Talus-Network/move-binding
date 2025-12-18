@@ -1,9 +1,10 @@
 use std::str::FromStr;
 
 use sui_move_call::{CallArg, CallSpec, MoveObject, ReceivingMoveObject, SharedMoveObject};
-use sui_move_ptb::{ptb, PtbBuilder};
+use sui_move_ptb::{ptb, BuildError, PtbBuilder};
 use sui_sdk_types::{
-    Address, Argument, Command, Digest, FundsWithdrawal, ObjectReference, TypeTag, WithdrawFrom,
+    Address, Argument, Command, Digest, FundsWithdrawal, Mutability, ObjectReference, TypeTag,
+    WithdrawFrom,
 };
 
 #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
@@ -98,4 +99,39 @@ fn dedups_identical_inputs_except_funds_withdrawal() {
         .filter(|i| matches!(i, CallArg::FundsWithdrawal(_)))
         .count();
     assert_eq!(fw_count, 2);
+}
+
+#[test]
+fn upgrades_shared_mutability_and_reuses_input_index() {
+    let object_id = Address::from_str("0x2").unwrap();
+    let shared_imm = SharedMoveObject::<Thing>::immutable(object_id, 7);
+    let shared_mut = SharedMoveObject::<Thing>::mutable(object_id, 7);
+
+    let mut tx = PtbBuilder::new();
+    let a0 = tx.arg(&shared_imm).unwrap();
+    let a1 = tx.arg(&shared_mut).unwrap();
+
+    assert_eq!(a0, Argument::Input(0));
+    assert_eq!(a1, Argument::Input(0));
+    assert_eq!(tx.inputs().len(), 1);
+
+    let CallArg::Shared(shared) = &tx.inputs()[0] else {
+        panic!("expected shared input")
+    };
+    assert_eq!(shared.object_id(), object_id);
+    assert_eq!(shared.version(), 7);
+    assert_eq!(shared.mutability(), Mutability::Mutable);
+}
+
+#[test]
+fn rejects_duplicate_object_ids_between_receiving_and_input_objects() {
+    let object_ref = mk_obj("0x2", 1);
+    let owned = MoveObject::<Thing>::new(object_ref.clone());
+    let receiving = ReceivingMoveObject::<Thing>::new(object_ref);
+
+    let mut tx = PtbBuilder::new();
+    tx.arg(&owned).unwrap();
+
+    let err = tx.arg(&receiving).unwrap_err();
+    assert!(matches!(err, BuildError::DuplicateObjectRefInput { .. }));
 }

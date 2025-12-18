@@ -3,8 +3,8 @@
 
 use sui_move_call::{CallArg, CallArgError, CallSpec, ToCallArg};
 use sui_sdk_types::{
-    Address, Argument, Command, MakeMoveVector, MergeCoins, MoveCall, ProgrammableTransaction,
-    Publish, SplitCoins, TransferObjects, TypeTag,
+    Address, Argument, Command, MakeMoveVector, MergeCoins, MoveCall, Mutability,
+    ProgrammableTransaction, Publish, SharedInput, SplitCoins, TransferObjects, TypeTag,
 };
 
 /// Errors that can occur while building a `ProgrammableTransaction`.
@@ -21,6 +21,15 @@ pub enum BuildError {
     /// Too many commands were added (PTB uses `u16` indices for results).
     #[error("too many PTB commands (u16 overflow)")]
     TooManyCommands,
+
+    /// The same object id appears more than once across object inputs (including receiving).
+    ///
+    /// This matches Sui's `DuplicateObjectRefInput` class of errors.
+    #[error("duplicate object id {object_id} in PTB inputs")]
+    DuplicateObjectRefInput {
+        /// Duplicated object id.
+        object_id: Address,
+    },
 }
 
 /// Mutable builder for `ProgrammableTransaction`.
@@ -68,10 +77,58 @@ impl PtbBuilder {
     }
 
     fn push_input(&mut self, input: CallArg) -> Result<u16, BuildError> {
-        if !matches!(input, CallArg::FundsWithdrawal(_)) {
-            if let Some(idx) = self.inputs.iter().position(|existing| existing == &input) {
-                return u16::try_from(idx).map_err(|_| BuildError::TooManyInputs);
+        if matches!(input, CallArg::FundsWithdrawal(_)) {
+            let idx = u16::try_from(self.inputs.len()).map_err(|_| BuildError::TooManyInputs)?;
+            self.inputs.push(input);
+            return Ok(idx);
+        }
+
+        if let Some(idx) = self.inputs.iter().position(|existing| existing == &input) {
+            return u16::try_from(idx).map_err(|_| BuildError::TooManyInputs);
+        }
+
+        match &input {
+            CallArg::Shared(shared) => {
+                let object_id = shared.object_id();
+                let version = shared.version();
+                let mutability = shared.mutability();
+
+                for (idx, existing) in self.inputs.iter_mut().enumerate() {
+                    match existing {
+                        CallArg::Shared(existing_shared)
+                            if existing_shared.object_id() == object_id =>
+                        {
+                            if existing_shared.version() != version {
+                                return Err(BuildError::DuplicateObjectRefInput { object_id });
+                            }
+
+                            let upgraded =
+                                upgrade_shared_mutability(existing_shared.mutability(), mutability);
+                            if upgraded != existing_shared.mutability() {
+                                *existing =
+                                    CallArg::Shared(SharedInput::new(object_id, version, upgraded));
+                            }
+
+                            return u16::try_from(idx).map_err(|_| BuildError::TooManyInputs);
+                        }
+                        other if call_arg_object_id(other) == Some(object_id) => {
+                            return Err(BuildError::DuplicateObjectRefInput { object_id });
+                        }
+                        _ => {}
+                    }
+                }
             }
+            CallArg::ImmutableOrOwned(reference) | CallArg::Receiving(reference) => {
+                let object_id = *reference.object_id();
+                if self
+                    .inputs
+                    .iter()
+                    .any(|existing| call_arg_object_id(existing) == Some(object_id))
+                {
+                    return Err(BuildError::DuplicateObjectRefInput { object_id });
+                }
+            }
+            _ => {}
         }
 
         let idx = u16::try_from(self.inputs.len()).map_err(|_| BuildError::TooManyInputs)?;
@@ -91,6 +148,13 @@ impl PtbBuilder {
     /// same typed handle across multiple calls.
     ///
     /// Exception: `Input::FundsWithdrawal` is never deduplicated (duplicates can be meaningful).
+    ///
+    /// Additional rules for object inputs:
+    ///
+    /// - Shared inputs are unified by `(object_id, initial_shared_version)` and upgraded to the
+    ///   most permissive mutability mode when the same shared object is added multiple times.
+    /// - Duplicate object ids across input objects and receiving objects are rejected early with
+    ///   [`BuildError::DuplicateObjectRefInput`].
     ///
     /// # Example
     /// ```
@@ -304,4 +368,24 @@ pub mod prelude {
     pub use crate::{ptb, BuildError, PtbBuilder};
     pub use sui_move_call::prelude::*;
     pub use sui_sdk_types::{Argument, Command, ProgrammableTransaction};
+}
+
+fn call_arg_object_id(input: &CallArg) -> Option<Address> {
+    match input {
+        CallArg::ImmutableOrOwned(reference) | CallArg::Receiving(reference) => {
+            Some(*reference.object_id())
+        }
+        CallArg::Shared(shared) => Some(shared.object_id()),
+        _ => None,
+    }
+}
+
+fn upgrade_shared_mutability(existing: Mutability, requested: Mutability) -> Mutability {
+    use Mutability::{Immutable, Mutable, NonExclusiveWrite};
+
+    match (existing, requested) {
+        (Mutable, _) | (_, Mutable) => Mutable,
+        (NonExclusiveWrite, _) | (_, NonExclusiveWrite) => NonExclusiveWrite,
+        _ => Immutable,
+    }
 }

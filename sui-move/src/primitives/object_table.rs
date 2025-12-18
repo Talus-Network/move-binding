@@ -17,11 +17,13 @@ use crate::{parse_address, parse_identifier, MoveStruct, MoveType};
 /// let _tag = <ObjectTable<u64, Coin<SUI>> as MoveType>::type_tag_static();
 /// ```
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
 pub struct ObjectTable<
     K: MoveType + crate::HasCopy + crate::HasDrop + crate::HasStore,
     V: MoveType + crate::HasKey + crate::HasStore,
 > {
     pub id: crate::types::UID,
+    pub size: u64,
     #[serde(skip, default)]
     pub phantom: std::marker::PhantomData<(K, V)>,
 }
@@ -55,5 +57,12 @@ impl<
         K: MoveType + crate::HasCopy + crate::HasDrop + crate::HasStore,
         V: MoveType + crate::HasKey + crate::HasStore,
     > crate::HasStore for ObjectTable<K, V>
+{
+}
+
+impl<
+        K: MoveType + crate::HasCopy + crate::HasDrop + crate::HasStore,
+        V: MoveType + crate::HasKey + crate::HasStore,
+    > crate::HasKey for ObjectTable<K, V>
 {
 }

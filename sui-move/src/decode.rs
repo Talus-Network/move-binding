@@ -22,12 +22,13 @@ pub fn decode_copyable<T: Copyable + DeserializeOwned>(bytes: &[u8]) -> Result<T
 /// # Example
 /// ```
 /// use std::marker::PhantomData;
+/// use sui_sdk_types::Address;
 /// use sui_move::{balance::Balance, coin::Coin, decode_keyed, sui::SUI, types::ID, types::UID, MoveType};
 ///
 /// let coin = Coin::<SUI> {
 ///     id: UID {
 ///         id: ID {
-///             bytes: vec![0u8; 32],
+///             bytes: Address::new([0u8; 32]),
 ///         },
 ///     },
 ///     balance: Balance::<SUI> {

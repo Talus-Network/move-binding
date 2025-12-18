@@ -6,6 +6,16 @@ This crate exists to solve one problem: **turn a Rust struct into a Move-shaped 
 `TypeTag`/`StructTag` + ability markers) so it can be used with `sui-move`’s type-tag plumbing and
 tag-checked decoding.
 
+## Where it fits
+
+In the repository’s layered stack (`MODEL.md`), `sui-move-derive` is a convenience layer for the
+bottom type system (`sui-move`):
+
+- you describe the Move identity (`address`, `module`, `abilities`) as attributes,
+- the macro generates the corresponding `sui_move::MoveType` / `sui_move::MoveStruct` impls and
+  ability marker impls,
+- higher layers (call/PTB/runtime) consume those traits for typed interactions.
+
 ## What you get
 
 Given a struct like:
@@ -101,6 +111,7 @@ You can satisfy those requirements either by:
 
 ```rust,no_run
 use std::marker::PhantomData;
+use sui_move::prelude::Address;
 use sui_move::types::{ID, UID};
 use sui_move_derive::move_struct;
 
@@ -121,7 +132,7 @@ fn main() {
     let _value = Vault::<u64> {
         id: UID {
             id: ID {
-                bytes: vec![0u8; 32],
+                bytes: Address::new([0u8; 32]),
             },
         },
         balance: vec![1, 2, 3],

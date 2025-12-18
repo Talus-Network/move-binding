@@ -1,29 +1,54 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, RwLock};
 
+use serde::{Deserialize, Serialize};
 use sui_move_call::{CallArg, ToCallArg};
-use sui_sdk_types::{Address, Mutability, ObjectReference, SharedInput};
+use sui_sdk_types::{Address, Mutability, ObjectReference, Owner, SharedInput};
 
 use crate::effects;
+use crate::tx;
 
 #[derive(Debug)]
 struct ObjectCell {
     object_id: Address,
     reference: RwLock<ObjectReference>,
+    owner: RwLock<Owner>,
+    tombstone: RwLock<Option<effects::TombstoneReason>>,
 }
 
 impl ObjectCell {
-    fn new(reference: ObjectReference) -> Self {
+    fn new(reference: ObjectReference, owner: Owner) -> Self {
         Self {
             object_id: *reference.object_id(),
             reference: RwLock::new(reference),
+            owner: RwLock::new(owner),
+            tombstone: RwLock::new(None),
         }
     }
 
     fn reference(&self) -> ObjectReference {
         self.reference.read().expect("poisoned object lock").clone()
+    }
+
+    fn set_owner(&self, owner: Owner) {
+        let mut lock = self.owner.write().expect("poisoned object lock");
+        *lock = owner;
+    }
+
+    fn tombstone_reason(&self) -> Option<effects::TombstoneReason> {
+        *self.tombstone.read().expect("poisoned object lock")
+    }
+
+    fn set_tombstone_reason(&self, reason: effects::TombstoneReason) {
+        let mut lock = self.tombstone.write().expect("poisoned object lock");
+        *lock = Some(reason);
+    }
+
+    fn clear_tombstone(&self) {
+        let mut lock = self.tombstone.write().expect("poisoned object lock");
+        *lock = None;
     }
 
     fn set_reference(&self, reference: ObjectReference) {
@@ -40,10 +65,38 @@ impl ObjectCell {
     }
 }
 
-/// Runtime-owned handle for an immutable-or-owned object input.
+/// Serializable snapshot of a runtime cursor (your local frontier).
+///
+/// This is meant for persisting and restoring the runtime’s local view across process restarts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CursorSnapshot {
+    objects: Vec<TrackedObjectSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct TrackedObjectSnapshot {
+    object_id: Address,
+    reference: ObjectReference,
+    owner: Owner,
+    tombstone: Option<crate::TombstoneReason>,
+}
+
+/// Runtime-owned handle for an on-chain object used as a transaction input.
 ///
 /// This is the ergonomic “seamless handle” variant: it carries the Rust type `T` while storing
 /// the mutable `ObjectReference` behind interior mutability. The runtime updates it after commit.
+///
+/// Unlike `sui-move-call::MoveObject<T>`, this handle also tracks:
+/// - the latest known on-chain owner kind (owned/immutable/shared/...)
+/// - tombstone status (deleted/wrapped/not-exist)
+///
+/// When converted into a `CallArg`, the handle chooses the correct Sui input shape based on its
+/// current owner kind:
+/// - immutable/address-owned → `Input::ImmutableOrOwned(ObjectReference)`
+/// - shared-like (`Owner::Shared` or `Owner::ConsensusAddress`) → `Input::Shared(SharedInput)` (immutable by default)
+///
+/// If the object becomes a child object, is tombstoned, or the owner kind is unknown, conversion
+/// fails early with a [`sui_move_call::CallArgError`].
 ///
 /// `Object<T>` implements [`ToCallArg`], so you can pass it to `sui-move-call` interface functions
 /// that accept `&impl ToCallArg` and push it into a `CallSpec`.
@@ -62,7 +115,9 @@ impl ObjectCell {
 ///
 /// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
 /// let coin: Object<Coin<SUI>> = rt.read().object("0x2".parse().unwrap()).await?;
-/// move_time!(rt, sender, { touch(&coin); }).await?;
+/// let mut tx = rt.tx(sender);
+/// tx.call(touch(&coin))?;
+/// tx.commit().await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -97,21 +152,126 @@ impl<T> Object<T> {
 
     /// Snapshot of the current `ObjectReference`.
     ///
-    /// This value is updated after [`crate::MoveTime::commit`] (if the object was changed by the
+    /// This value is updated after [`crate::Tx::commit`] (if the object was changed by the
     /// committed transaction). It is not automatically refreshed when other transactions mutate
     /// the object on-chain.
     pub fn reference(&self) -> ObjectReference {
         self.cell.reference()
     }
+
+    /// Return an immutable shared view of this object, if it is shared-like on-chain.
+    pub fn shared_immutable(&self) -> Result<SharedObject<T>, sui_move_call::CallArgError> {
+        let initial_shared_version = self.shared_start_version()?;
+        Ok(SharedObject::immutable(
+            self.object_id(),
+            initial_shared_version,
+        ))
+    }
+
+    /// Return a mutable shared view of this object, if it is shared-like on-chain.
+    pub fn shared_mutable(&self) -> Result<SharedObject<T>, sui_move_call::CallArgError> {
+        let initial_shared_version = self.shared_start_version()?;
+        Ok(SharedObject::mutable(
+            self.object_id(),
+            initial_shared_version,
+        ))
+    }
+
+    /// Return a receiving view of this object, if it is address-owned.
+    ///
+    /// Receiving is a transaction input mode used for `sui::transfer::Receiving<T>`: it allows
+    /// receiving an object that was transferred to an address that is also an object ID (transfer-to-object).
+    ///
+    /// This helper validates only the coarse owner kind:
+    /// - allowed: address-owned objects
+    /// - rejected: shared-like, immutable, child objects, tombstoned objects
+    ///
+    /// On-chain, Sui also checks that the object can be received through the specific parent
+    /// object you prove mutable access to (this runtime does not try to pre-validate that).
+    pub fn receiving(&self) -> Result<ReceivingObject<T>, sui_move_call::CallArgError> {
+        self.ensure_not_tombstoned()?;
+
+        let owner = self.cell.owner.read().expect("poisoned object lock");
+        match tx::classify_owner(&owner) {
+            tx::OwnerKind::AddressOwned => Ok(ReceivingObject {
+                cell: Arc::clone(&self.cell),
+                phantom: PhantomData,
+            }),
+            other => Err(sui_move_call::CallArgError::ObjectKind {
+                object_id: self.object_id(),
+                expected: "address-owned",
+                actual: other.label(),
+            }),
+        }
+    }
+
+    fn ensure_not_tombstoned(&self) -> Result<(), sui_move_call::CallArgError> {
+        if let Some(reason) = self.cell.tombstone_reason() {
+            return Err(sui_move_call::CallArgError::Tombstoned {
+                object_id: self.object_id(),
+                reason: reason.label(),
+            });
+        }
+        Ok(())
+    }
+
+    fn shared_start_version(&self) -> Result<u64, sui_move_call::CallArgError> {
+        self.ensure_not_tombstoned()?;
+
+        let owner = self.cell.owner.read().expect("poisoned object lock");
+        let kind = tx::classify_owner(&owner);
+        if !kind.is_shared_like() {
+            return Err(sui_move_call::CallArgError::ObjectKind {
+                object_id: self.object_id(),
+                expected: "shared",
+                actual: kind.label(),
+            });
+        };
+
+        let Some(initial_shared_version) = kind.shared_start_version() else {
+            return Err(sui_move_call::CallArgError::ObjectKind {
+                object_id: self.object_id(),
+                expected: "shared",
+                actual: kind.label(),
+            });
+        };
+
+        Ok(initial_shared_version)
+    }
 }
 
 impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for Object<T> {
     fn to_call_arg(&self) -> Result<CallArg, sui_move_call::CallArgError> {
-        Ok(CallArg::ImmutableOrOwned(self.reference()))
+        self.ensure_not_tombstoned()?;
+
+        let owner = self.cell.owner.read().expect("poisoned object lock");
+        match tx::classify_owner(&owner) {
+            tx::OwnerKind::Immutable | tx::OwnerKind::AddressOwned => {
+                Ok(CallArg::ImmutableOrOwned(self.reference()))
+            }
+            kind if kind.is_shared_like() => {
+                let Some(initial_shared_version) = kind.shared_start_version() else {
+                    return Err(sui_move_call::CallArgError::ObjectKind {
+                        object_id: self.object_id(),
+                        expected: "shared",
+                        actual: kind.label(),
+                    });
+                };
+
+                Ok(CallArg::Shared(SharedInput::new(
+                    self.object_id(),
+                    initial_shared_version,
+                    Mutability::Immutable,
+                )))
+            }
+            other => Err(sui_move_call::CallArgError::ObjectKind {
+                object_id: self.object_id(),
+                expected: "immutable-or-owned or shared",
+                actual: other.label(),
+            }),
+        }
     }
 }
-
-impl<T: sui_move::MoveStruct + sui_move::HasKey> sui_move_call::ObjectArg<T> for Object<T> {}
 
 /// Runtime-owned handle for a receiving object input.
 ///
@@ -147,7 +307,7 @@ impl<T> ReceivingObject<T> {
 
     /// Snapshot of the current `ObjectReference`.
     ///
-    /// This value is updated after [`crate::MoveTime::commit`] (if the object was changed by the
+    /// This value is updated after [`crate::Tx::commit`] (if the object was changed by the
     /// committed transaction).
     pub fn reference(&self) -> ObjectReference {
         self.cell.reference()
@@ -156,13 +316,23 @@ impl<T> ReceivingObject<T> {
 
 impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for ReceivingObject<T> {
     fn to_call_arg(&self) -> Result<CallArg, sui_move_call::CallArgError> {
-        Ok(CallArg::Receiving(self.reference()))
-    }
-}
+        let obj = Object::<T> {
+            cell: Arc::clone(&self.cell),
+            phantom: PhantomData,
+        };
 
-impl<T: sui_move::MoveStruct + sui_move::HasKey> sui_move_call::ObjectArg<T>
-    for ReceivingObject<T>
-{
+        obj.ensure_not_tombstoned()?;
+
+        let owner = obj.cell.owner.read().expect("poisoned object lock");
+        match tx::classify_owner(&owner) {
+            tx::OwnerKind::AddressOwned => Ok(CallArg::Receiving(self.reference())),
+            other => Err(sui_move_call::CallArgError::ObjectKind {
+                object_id: self.object_id(),
+                expected: "address-owned",
+                actual: other.label(),
+            }),
+        }
+    }
 }
 
 /// Typed handle for a shared object input.
@@ -258,161 +428,62 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for SharedObject<T> {
     }
 }
 
-impl<T: sui_move::MoveStruct + sui_move::HasKey> sui_move_call::ObjectArg<T> for SharedObject<T> {}
-
-/// Convenience wrapper for “some object” whose on-chain ownership might be owned/immutable or shared.
-///
-/// This wrapper exists to keep user code in “namespace mode”:
-/// - fetch a handle (`Read::object_any`)
-/// - pass it to interface functions as `&impl ToCallArg`
-///
-/// If the object is shared on-chain, this wrapper **defaults to immutable shared** when converted
-/// to a `CallArg`. If you need mutable shared access, call [`AnyObject::as_shared_mutable`].
-///
-/// # Example
-/// ```rust,no_run
-/// use sui_move_runtime::prelude::*;
-/// use sui_move::{coin::Coin, sui::SUI};
-///
-/// fn touch(obj: &impl ToCallArg) -> CallSpec {
-///     let package: sui_sdk_types::Address = "0x1".parse().unwrap();
-///     let mut spec = CallSpec::new(package, "demo", "touch").unwrap();
-///     spec.push_arg(obj).unwrap();
-///     spec
-/// }
-///
-/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
-/// let any: AnyObject<Coin<SUI>> = rt.read().object_any("0x2".parse().unwrap()).await?;
-///
-/// // Works for both owned/immutable and shared objects (shared defaults to immutable).
-/// move_time!(rt, sender, { touch(&any); }).await?;
-///
-/// // If it is shared and you need &mut on the Move side:
-/// let shared_mut = any.as_shared_mutable()?;
-/// move_time!(rt, sender, { touch(&shared_mut); }).await?;
-/// # Ok(())
-/// # }
-/// ```
-pub struct AnyObject<T> {
-    inner: AnyObjectInner<T>,
-}
-
-enum AnyObjectInner<T> {
-    ImmutableOrOwned(Object<T>),
-    Shared(SharedObject<T>),
-}
-
-impl<T> Clone for AnyObject<T> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: match &self.inner {
-                AnyObjectInner::ImmutableOrOwned(o) => AnyObjectInner::ImmutableOrOwned(o.clone()),
-                AnyObjectInner::Shared(s) => AnyObjectInner::Shared(s.clone()),
-            },
-        }
-    }
-}
-
-impl<T> fmt::Debug for AnyObject<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.inner {
-            AnyObjectInner::ImmutableOrOwned(o) => f
-                .debug_tuple("AnyObject::ImmutableOrOwned")
-                .field(o)
-                .finish(),
-            AnyObjectInner::Shared(s) => f.debug_tuple("AnyObject::Shared").field(s).finish(),
-        }
-    }
-}
-
-impl<T> AnyObject<T> {
-    pub(crate) fn from_object(object: Object<T>) -> Self {
-        Self {
-            inner: AnyObjectInner::ImmutableOrOwned(object),
-        }
-    }
-
-    pub(crate) fn from_shared(shared: SharedObject<T>) -> Self {
-        Self {
-            inner: AnyObjectInner::Shared(shared),
-        }
-    }
-
-    /// Object id.
-    pub fn object_id(&self) -> Address {
-        match &self.inner {
-            AnyObjectInner::ImmutableOrOwned(o) => o.object_id(),
-            AnyObjectInner::Shared(s) => s.object_id(),
-        }
-    }
-
-    /// Returns `true` if this object is shared on-chain.
-    pub fn is_shared(&self) -> bool {
-        matches!(self.inner, AnyObjectInner::Shared(_))
-    }
-
-    /// Return the owned/immutable handle, if the object is not shared.
-    pub fn as_object(&self) -> Result<Object<T>, crate::Error> {
-        match &self.inner {
-            AnyObjectInner::ImmutableOrOwned(o) => Ok(o.clone()),
-            AnyObjectInner::Shared(s) => Err(crate::Error::ObjectKind {
-                object_id: s.object_id(),
-                expected: "immutable-or-owned",
-                actual: "shared",
-            }),
-        }
-    }
-
-    /// Return an immutable shared handle, if the object is shared.
-    pub fn as_shared_immutable(&self) -> Result<SharedObject<T>, crate::Error> {
-        match &self.inner {
-            AnyObjectInner::Shared(s) => Ok(s.clone()),
-            AnyObjectInner::ImmutableOrOwned(o) => Err(crate::Error::ObjectKind {
-                object_id: o.object_id(),
-                expected: "shared",
-                actual: "immutable-or-owned",
-            }),
-        }
-    }
-
-    /// Return a mutable shared handle, if the object is shared.
-    pub fn as_shared_mutable(&self) -> Result<SharedObject<T>, crate::Error> {
-        match &self.inner {
-            AnyObjectInner::Shared(s) => Ok(SharedObject::mutable(
-                s.object_id(),
-                s.initial_shared_version(),
-            )),
-            AnyObjectInner::ImmutableOrOwned(o) => Err(crate::Error::ObjectKind {
-                object_id: o.object_id(),
-                expected: "shared",
-                actual: "immutable-or-owned",
-            }),
-        }
-    }
-}
-
-impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for AnyObject<T> {
-    fn to_call_arg(&self) -> Result<CallArg, sui_move_call::CallArgError> {
-        match &self.inner {
-            AnyObjectInner::ImmutableOrOwned(o) => o.to_call_arg(),
-            AnyObjectInner::Shared(s) => s.to_call_arg(),
-        }
-    }
-}
-
-impl<T: sui_move::MoveStruct + sui_move::HasKey> sui_move_call::ObjectArg<T> for AnyObject<T> {}
-
 #[derive(Default, Debug)]
-pub(crate) struct Registry {
-    objects: Mutex<HashMap<Address, Weak<ObjectCell>>>,
+pub(crate) struct Cursor {
+    objects: Mutex<HashMap<Address, Arc<ObjectCell>>>,
 }
 
-impl Registry {
+impl Cursor {
+    pub(crate) fn from_snapshot(snapshot: CursorSnapshot) -> Self {
+        let mut map = HashMap::<Address, Arc<ObjectCell>>::with_capacity(snapshot.objects.len());
+        for obj in snapshot.objects {
+            debug_assert_eq!(
+                obj.object_id,
+                *obj.reference.object_id(),
+                "cursor snapshot is inconsistent"
+            );
+
+            let cell = Arc::new(ObjectCell::new(obj.reference, obj.owner));
+            if let Some(reason) = obj.tombstone {
+                cell.set_tombstone_reason(reason);
+            }
+            map.insert(obj.object_id, cell);
+        }
+
+        Self {
+            objects: Mutex::new(map),
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> CursorSnapshot {
+        let cells: Vec<Arc<ObjectCell>> = self
+            .objects
+            .lock()
+            .expect("poisoned cursor lock")
+            .values()
+            .cloned()
+            .collect();
+
+        let mut objects: Vec<TrackedObjectSnapshot> = cells
+            .into_iter()
+            .map(|cell| TrackedObjectSnapshot {
+                object_id: cell.object_id,
+                reference: cell.reference(),
+                owner: *cell.owner.read().expect("poisoned object lock"),
+                tombstone: cell.tombstone_reason(),
+            })
+            .collect();
+        objects.sort_by_key(|obj| obj.object_id);
+
+        CursorSnapshot { objects }
+    }
+
     pub(crate) fn intern_object<T: sui_move::MoveStruct + sui_move::HasKey>(
         &self,
         reference: ObjectReference,
+        owner: Owner,
     ) -> Object<T> {
-        let cell = self.intern_cell(reference);
+        let cell = self.intern_cell(reference, owner);
         Object {
             cell,
             phantom: PhantomData,
@@ -422,45 +493,71 @@ impl Registry {
     pub(crate) fn intern_receiving_object<T: sui_move::MoveStruct + sui_move::HasKey>(
         &self,
         reference: ObjectReference,
+        owner: Owner,
     ) -> ReceivingObject<T> {
-        let cell = self.intern_cell(reference);
+        let cell = self.intern_cell(reference, owner);
         ReceivingObject {
             cell,
             phantom: PhantomData,
         }
     }
 
-    fn intern_cell(&self, reference: ObjectReference) -> Arc<ObjectCell> {
+    pub(crate) fn intern_untyped(&self, reference: ObjectReference, owner: Owner) {
+        let _ = self.intern_cell(reference, owner);
+    }
+
+    fn intern_cell(&self, reference: ObjectReference, owner: Owner) -> Arc<ObjectCell> {
         let object_id = *reference.object_id();
 
-        let mut map = self.objects.lock().expect("poisoned registry lock");
-        if let Some(existing) = map.get(&object_id).and_then(Weak::upgrade) {
+        let mut map = self.objects.lock().expect("poisoned cursor lock");
+        if let Some(existing) = map.get(&object_id) {
             existing.set_reference(reference);
-            return existing;
+            existing.set_owner(owner);
+            existing.clear_tombstone();
+            return Arc::clone(existing);
         }
 
-        let cell = Arc::new(ObjectCell::new(reference));
-        map.insert(object_id, Arc::downgrade(&cell));
+        let cell = Arc::new(ObjectCell::new(reference, owner));
+        map.insert(object_id, Arc::clone(&cell));
         cell
     }
 
-    pub(crate) fn apply_effects(&self, effects_in: &sui_sdk_types::TransactionEffects) {
-        for update in effects::updated_references(effects_in) {
-            if let Some(cell) = self.upgrade(update.object_id) {
-                cell.set_reference(update.reference);
-            }
+    pub(crate) fn tombstone(&self, object_id: Address, reason: crate::TombstoneReason) {
+        if let Some(cell) = self
+            .objects
+            .lock()
+            .expect("poisoned cursor lock")
+            .get(&object_id)
+        {
+            cell.set_tombstone_reason(reason);
         }
     }
 
-    fn upgrade(&self, object_id: Address) -> Option<Arc<ObjectCell>> {
-        let mut map = self.objects.lock().expect("poisoned registry lock");
-        let weak = map.get(&object_id).cloned()?;
+    pub(crate) fn apply_patch(&self, effects: &sui_sdk_types::TransactionEffects) {
+        let patch = effects::EffectsPatch::from_effects(effects);
+        let tombstones: HashMap<Address, effects::TombstoneReason> = patch
+            .tombstones
+            .into_iter()
+            .map(|tombstone| (tombstone.object_id, tombstone.reason))
+            .collect();
 
-        match weak.upgrade() {
-            Some(cell) => Some(cell),
-            None => {
-                map.remove(&object_id);
-                None
+        let map = self.objects.lock().expect("poisoned cursor lock");
+        for (object_id, reason) in &tombstones {
+            if let Some(cell) = map.get(object_id) {
+                cell.set_tombstone_reason(*reason);
+            }
+        }
+
+        for upsert in patch.upserts {
+            if tombstones.contains_key(&upsert.object_id) {
+                continue;
+            }
+            if let Some(cell) = map.get(&upsert.object_id) {
+                cell.set_reference(upsert.reference);
+                if let Some(owner) = upsert.owner {
+                    cell.set_owner(owner);
+                }
+                cell.clear_tombstone();
             }
         }
     }
@@ -480,14 +577,14 @@ mod tests {
     }
 
     #[test]
-    fn registry_interns_cells_by_object_id() {
+    fn cursor_interns_cells_by_object_id() {
         let id = Address::from_hex("0x2").unwrap();
         let a = ObjectReference::new(id, 1, Digest::default());
         let b = ObjectReference::new(id, 2, Digest::default());
 
-        let registry = Registry::default();
-        let obj_a: Object<Demo> = registry.intern_object(a);
-        let obj_b: Object<Demo> = registry.intern_object(b);
+        let cursor = Cursor::default();
+        let obj_a: Object<Demo> = cursor.intern_object(a, Owner::Immutable);
+        let obj_b: Object<Demo> = cursor.intern_object(b, Owner::Immutable);
 
         assert_eq!(obj_a.object_id(), id);
         assert_eq!(obj_b.object_id(), id);
@@ -496,12 +593,64 @@ mod tests {
     }
 
     #[test]
-    fn apply_effects_updates_live_handles() {
+    fn cursor_snapshot_roundtrips_through_json() {
+        let a = Address::from_hex("0x2").unwrap();
+        let b = Address::from_hex("0x3").unwrap();
+
+        let cursor = Cursor::default();
+        cursor.intern_object::<Demo>(
+            ObjectReference::new(a, 1, Digest::default()),
+            Owner::Immutable,
+        );
+        cursor.intern_object::<Demo>(
+            ObjectReference::new(b, 2, Digest::default()),
+            Owner::Address(Address::from_hex("0x123").unwrap()),
+        );
+        cursor.tombstone(b, crate::TombstoneReason::Wrapped);
+
+        let snapshot = cursor.snapshot();
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let decoded: CursorSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snapshot, decoded);
+
+        let restored = Cursor::from_snapshot(decoded.clone());
+        assert_eq!(restored.snapshot(), decoded);
+    }
+
+    #[test]
+    fn cursor_intern_overwrites_state_and_clears_tombstone() {
+        let id = Address::from_hex("0x2").unwrap();
+        let old = ObjectReference::new(id, 1, Digest::default());
+        let new = ObjectReference::new(id, 7, Digest::default());
+
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(old, Owner::Immutable);
+        cursor.tombstone(id, crate::TombstoneReason::NotExist);
+
+        assert!(matches!(
+            obj.to_call_arg().unwrap_err(),
+            sui_move_call::CallArgError::Tombstoned { .. }
+        ));
+
+        cursor.intern_object::<Demo>(new, Owner::Shared(7));
+
+        assert_eq!(obj.reference().version(), 7);
+        assert_eq!(obj.cell.tombstone_reason(), None);
+        let CallArg::Shared(shared) = obj.to_call_arg().unwrap() else {
+            panic!("expected shared input");
+        };
+        assert_eq!(shared.object_id(), id);
+        assert_eq!(shared.version(), 7);
+        assert_eq!(shared.mutability(), Mutability::Immutable);
+    }
+
+    #[test]
+    fn apply_patch_updates_live_handles() {
         let id = Address::from_hex("0x2").unwrap();
         let old = ObjectReference::new(id, 1, Digest::default());
 
-        let registry = Registry::default();
-        let obj: Object<Demo> = registry.intern_object(old);
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(old, Owner::Immutable);
         assert_eq!(obj.reference().version(), 1);
 
         let effects = TransactionEffects::V2(Box::new(TransactionEffectsV2 {
@@ -530,50 +679,177 @@ mod tests {
             auxiliary_data_digest: None,
         }));
 
-        registry.apply_effects(&effects);
+        cursor.apply_patch(&effects);
         assert_eq!(obj.reference().version(), 7);
     }
 
     #[test]
-    fn any_object_defaults_shared_to_immutable() {
+    fn object_defaults_shared_to_immutable() {
         let id = Address::from_hex("0x2").unwrap();
+        let reference = ObjectReference::new(id, 1, Digest::default());
 
-        let any = AnyObject::<Demo>::from_shared(SharedObject::immutable(id, 1));
-        let arg = any.to_call_arg().unwrap();
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(reference, Owner::Shared(7));
 
+        let arg = obj.to_call_arg().unwrap();
         let CallArg::Shared(shared) = arg else {
             panic!("expected shared call arg")
         };
 
         assert_eq!(shared.object_id(), id);
-        assert_eq!(shared.version(), 1);
+        assert_eq!(shared.version(), 7);
         assert_eq!(shared.mutability(), Mutability::Immutable);
-
-        let shared_mut = any.as_shared_mutable().unwrap();
-        let CallArg::Shared(shared_mut_arg) = shared_mut.to_call_arg().unwrap() else {
-            panic!("expected shared call arg")
-        };
-        assert_eq!(shared_mut_arg.mutability(), Mutability::Mutable);
     }
 
     #[test]
-    fn any_object_owned_delegates_to_immutable_or_owned() {
+    fn object_to_call_arg_fails_for_tombstoned_objects() {
         let id = Address::from_hex("0x2").unwrap();
         let reference = ObjectReference::new(id, 1, Digest::default());
 
-        let registry = Registry::default();
-        let obj: Object<Demo> = registry.intern_object(reference.clone());
-        let any = AnyObject::<Demo>::from_object(obj);
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(reference, Owner::Immutable);
 
-        assert!(!any.is_shared());
+        let effects = TransactionEffects::V2(Box::new(TransactionEffectsV2 {
+            status: ExecutionStatus::Success,
+            epoch: 0,
+            gas_used: GasCostSummary::new(0, 0, 0, 0),
+            transaction_digest: Digest::default(),
+            gas_object_index: None,
+            events_digest: None,
+            dependencies: vec![],
+            lamport_version: 7,
+            changed_objects: vec![ChangedObject {
+                object_id: id,
+                input_state: ObjectIn::Exist {
+                    version: 1,
+                    digest: Digest::default(),
+                    owner: Owner::Immutable,
+                },
+                output_state: ObjectOut::NotExist,
+                id_operation: IdOperation::None,
+            }],
+            unchanged_consensus_objects: vec![],
+            auxiliary_data_digest: None,
+        }));
 
-        let arg = any.to_call_arg().unwrap();
-        let CallArg::ImmutableOrOwned(arg_ref) = arg else {
-            panic!("expected immutable-or-owned call arg")
+        cursor.apply_patch(&effects);
+        let err = obj.to_call_arg().unwrap_err();
+
+        match err {
+            sui_move_call::CallArgError::Tombstoned { object_id, reason } => {
+                assert_eq!(object_id, id);
+                assert_eq!(reason, "not-exist");
+            }
+            other => panic!("expected tombstoned error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn object_to_call_arg_fails_for_child_objects() {
+        let id = Address::from_hex("0x2").unwrap();
+        let parent = Address::from_hex("0x3").unwrap();
+        let reference = ObjectReference::new(id, 1, Digest::default());
+
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(reference, Owner::Object(parent));
+
+        let err = obj.to_call_arg().unwrap_err();
+        match err {
+            sui_move_call::CallArgError::ObjectKind {
+                object_id,
+                expected,
+                actual,
+            } => {
+                assert_eq!(object_id, id);
+                assert_eq!(expected, "immutable-or-owned or shared");
+                assert_eq!(actual, "child-object");
+            }
+            other => panic!("expected object kind error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn object_shared_mutable_view_is_explicit() {
+        let id = Address::from_hex("0x2").unwrap();
+        let reference = ObjectReference::new(id, 1, Digest::default());
+
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(reference, Owner::Shared(7));
+
+        let shared_mut = obj.shared_mutable().unwrap();
+        let CallArg::Shared(shared) = shared_mut.to_call_arg().unwrap() else {
+            panic!("expected shared call arg")
         };
-        assert_eq!(arg_ref, reference);
+        assert_eq!(shared.object_id(), id);
+        assert_eq!(shared.version(), 7);
+        assert_eq!(shared.mutability(), Mutability::Mutable);
+    }
 
-        any.as_object().unwrap();
-        assert!(any.as_shared_mutable().is_err());
+    #[test]
+    fn object_receiving_view_requires_address_owned() {
+        let id = Address::from_hex("0x2").unwrap();
+        let owner = Address::from_hex("0x3").unwrap();
+        let reference = ObjectReference::new(id, 1, Digest::default());
+
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(reference.clone(), Owner::Address(owner));
+
+        let recv = obj.receiving().unwrap();
+        let arg = recv.to_call_arg().unwrap();
+        assert_eq!(arg, CallArg::Receiving(reference.clone()));
+
+        let obj: Object<Demo> = cursor.intern_object(reference.clone(), Owner::Shared(7));
+        let err = obj.receiving().unwrap_err();
+        match err {
+            sui_move_call::CallArgError::ObjectKind {
+                object_id,
+                expected,
+                actual,
+            } => {
+                assert_eq!(object_id, id);
+                assert_eq!(expected, "address-owned");
+                assert_eq!(actual, "shared");
+            }
+            other => panic!("expected object kind error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn apply_patch_tombstones_deleted_objects() {
+        let id = Address::from_hex("0x2").unwrap();
+        let old = ObjectReference::new(id, 1, Digest::default());
+
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(old, Owner::Immutable);
+        assert_eq!(obj.cell.tombstone_reason(), None);
+
+        let effects = TransactionEffects::V2(Box::new(TransactionEffectsV2 {
+            status: ExecutionStatus::Success,
+            epoch: 0,
+            gas_used: GasCostSummary::new(0, 0, 0, 0),
+            transaction_digest: Digest::default(),
+            gas_object_index: None,
+            events_digest: None,
+            dependencies: vec![],
+            lamport_version: 7,
+            changed_objects: vec![ChangedObject {
+                object_id: id,
+                input_state: ObjectIn::Exist {
+                    version: 1,
+                    digest: Digest::default(),
+                    owner: Owner::Immutable,
+                },
+                output_state: ObjectOut::NotExist,
+                id_operation: IdOperation::None,
+            }],
+            unchanged_consensus_objects: vec![],
+            auxiliary_data_digest: None,
+        }));
+
+        cursor.apply_patch(&effects);
+        assert_eq!(
+            obj.cell.tombstone_reason(),
+            Some(effects::TombstoneReason::NotExist)
+        );
     }
 }

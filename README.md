@@ -5,6 +5,9 @@ Layered crates for writing typed, ergonomic Move interactions on Sui from Rust.
 This workspace is intentionally “deep”: each crate is a small abstraction that solves one problem,
 and higher layers build on lower ones.
 
+The top-level mental model is **Read → Tx → Commit** with a **cursor** that advances your local
+frontier by applying transaction effects. See `MODEL.md`.
+
 ## Crates (low → high)
 
 - `sui-move`: Move-shaped types (`MoveType`, `MoveStruct`, abilities, decoding helpers).
@@ -15,8 +18,8 @@ and higher layers build on lower ones.
   See `sui-move-call/README.md`.
 - `sui-move-ptb`: build Sui `ProgrammableTransaction`s (PTBs) from `CallSpec`.
   See `sui-move-ptb/README.md`.
-- `sui-move-runtime`: a “Rust-time vs Move-time” runtime for commit/simulate/inspect of PTBs and
-  auto-updating runtime-owned object handles from transaction effects.
+- `sui-move-runtime`: a cursor-driven runtime for Read/Tx/Commit of PTBs and auto-updating typed
+  handles from transaction effects.
   See `sui-move-runtime/README.md`.
 - `sui-move-codegen`: generate typed Rust bindings (types + `CallSpec` builders) from on-chain Move
   package metadata.
