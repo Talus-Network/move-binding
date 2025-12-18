@@ -25,7 +25,7 @@ pub(crate) struct FetchedMoveObject {
 }
 
 /// Additional transaction options for submitting a PTB.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TxOptions {
     /// Optional sponsor address (gas owner). Defaults to sender.
     pub sponsor: Option<Address>,
@@ -37,6 +37,13 @@ pub struct TxOptions {
     pub gas_price: Option<u64>,
     /// Optional explicit expiration (TTL). Defaults to `None`.
     pub expiration: Option<TransactionExpiration>,
+    /// Finality requested for the commit.
+    ///
+    /// When `Checkpointed` (default), `commit*` uses an RPC method that also waits for checkpoint
+    /// inclusion ("read-your-writes" consistency on that node).
+    ///
+    /// When `Executed`, `commit*` should only require execution (effects produced).
+    pub finality: Finality,
 }
 
 /// Transaction finality requested by the caller.
@@ -46,6 +53,19 @@ pub enum Finality {
     Executed,
     /// Also wait for the transaction to be observed in a checkpoint on the connected RPC node.
     Checkpointed,
+}
+
+impl Default for TxOptions {
+    fn default() -> Self {
+        Self {
+            sponsor: None,
+            gas: None,
+            gas_budget: None,
+            gas_price: None,
+            expiration: None,
+            finality: Finality::Checkpointed,
+        }
+    }
 }
 
 /// Finality actually observed by the runtime.
@@ -234,6 +254,13 @@ pub enum TxError {
     /// Gas selection failed (no gas coin or RPC error).
     #[error("select gas: {0}")]
     Gas(String),
+
+    /// The requested finality is not supported by this commit path.
+    #[error("unsupported finality: {requested:?}")]
+    UnsupportedFinality {
+        /// Finality requested by the caller.
+        requested: Finality,
+    },
 }
 
 /// Errors for simulate/dev-inspect operations.
@@ -384,6 +411,12 @@ pub(crate) async fn submit_and_wait<S: SuiSigner>(
     default_gas_budget: u64,
     timeout: Duration,
 ) -> Result<Receipt, TxError> {
+    if opts.finality != Finality::Checkpointed {
+        return Err(TxError::UnsupportedFinality {
+            requested: opts.finality,
+        });
+    }
+
     let sponsor = opts.sponsor.unwrap_or(sender);
     let gas_price = match opts.gas_price {
         Some(p) => p,
@@ -429,7 +462,7 @@ pub(crate) async fn submit_and_wait<S: SuiSigner>(
     }
     req.read_mask = Some(mask.to_field_mask());
 
-    let requested_finality = Finality::Checkpointed;
+    let requested_finality = opts.finality;
 
     let (response, checkpoint_wait, observed_finality) = match client
         .execute_transaction_and_wait_for_checkpoint(req, timeout)

@@ -204,7 +204,7 @@ All transaction actions take a sender address and are methods on a transaction b
 
 - `digest` is always present once submission succeeds.
 - `effects`/`status` are present when returned by RPC (this crate requests `effects.bcs`).
-- `requested_finality` is what the runtime asked for (currently always checkpointed for commits).
+- `requested_finality` is what the runtime asked for (defaults to checkpointed for commits).
 - `observed_finality` + `checkpoint_wait` describe what the runtime actually observed.
 
 If checkpoint waiting times out, your transaction may still have executed. When effects are present
@@ -246,7 +246,9 @@ match receipt.checkpoint_wait {
         // `receipt.digest` is known; `receipt.effects` may be present.
         // If effects are present, the cursor has already been advanced.
     }
-    CheckpointWaitOutcome::NotRequested => unreachable!("commit always requests checkpointing"),
+    CheckpointWaitOutcome::NotRequested => {
+        // This can happen when the commit only requests execution finality.
+    }
 }
 
 receipt.ensure_success()?;
