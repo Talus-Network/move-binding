@@ -502,6 +502,10 @@ impl Cursor {
         }
     }
 
+    pub(crate) fn intern_untyped(&self, reference: ObjectReference, owner: Owner) {
+        let _ = self.intern_cell(reference, owner);
+    }
+
     fn intern_cell(&self, reference: ObjectReference, owner: Owner) -> Arc<ObjectCell> {
         let object_id = *reference.object_id();
 

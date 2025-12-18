@@ -211,21 +211,19 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         &mut self.rt.client
     }
 
-    /// Refresh the reference and owner information for a runtime-owned handle.
+    /// Refresh the reference and owner information for an object id in the runtime cursor.
     ///
-    /// This is the explicit escape hatch for external drift: if another transaction changes an
-    /// owned object (or rotates its `ObjectReference`), your local cursor does not update until you
-    /// either commit through this runtime or refresh explicitly.
-    pub async fn refresh<T: sui_move::MoveStruct + sui_move::HasKey>(
-        &mut self,
-        obj: &Object<T>,
-    ) -> Result<(), Error> {
-        let object_id = obj.object_id();
+    /// This is the explicit escape hatch for external drift: if other transactions mutate an
+    /// object you care about, your local cursor does not update until you either commit through
+    /// this runtime or refresh explicitly.
+    ///
+    /// If the object does not exist, the cursor is tombstoned (if it was being tracked).
+    pub async fn refresh_id(&mut self, object_id: Address) -> Result<(), Error> {
         match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
             Ok(fetched) => {
                 self.rt
                     .cursor
-                    .intern_object::<T>(fetched.reference, fetched.owner);
+                    .intern_untyped(fetched.reference, fetched.owner);
                 Ok(())
             }
             Err(err @ tx::RpcError::Missing(_)) => {
@@ -236,6 +234,31 @@ impl<'a, S: SuiSigner> Read<'a, S> {
             }
             Err(err) => Err(Error::Rpc(err)),
         }
+    }
+
+    /// Refresh multiple object ids in sequence.
+    ///
+    /// This calls [`Read::refresh_id`] for each provided id.
+    pub async fn refresh_ids(
+        &mut self,
+        object_ids: impl IntoIterator<Item = Address>,
+    ) -> Result<(), Error> {
+        for object_id in object_ids {
+            self.refresh_id(object_id).await?;
+        }
+        Ok(())
+    }
+
+    /// Refresh the reference and owner information for a runtime-owned handle.
+    ///
+    /// This is the explicit escape hatch for external drift: if another transaction changes an
+    /// owned object (or rotates its `ObjectReference`), your local cursor does not update until you
+    /// either commit through this runtime or refresh explicitly.
+    pub async fn refresh<T: sui_move::MoveStruct + sui_move::HasKey>(
+        &mut self,
+        obj: &Object<T>,
+    ) -> Result<(), Error> {
+        self.refresh_id(obj.object_id()).await
     }
 
     /// Construct a runtime-owned object handle by fetching its latest `ObjectReference` and owner kind.
@@ -251,7 +274,17 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         &mut self,
         object_id: Address,
     ) -> Result<Object<T>, Error> {
-        let fetched = tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
+        let fetched =
+            match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
+                Ok(fetched) => fetched,
+                Err(err @ tx::RpcError::Missing(_)) => {
+                    self.rt
+                        .cursor
+                        .tombstone(object_id, TombstoneReason::NotExist);
+                    return Err(Error::Rpc(err));
+                }
+                Err(err) => return Err(Error::Rpc(err)),
+            };
 
         let kind = tx::classify_owner(&fetched.owner);
         match kind {
@@ -412,7 +445,17 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         &mut self,
         object_id: Address,
     ) -> Result<ReceivingObject<T>, Error> {
-        let fetched = tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
+        let fetched =
+            match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
+                Ok(fetched) => fetched,
+                Err(err @ tx::RpcError::Missing(_)) => {
+                    self.rt
+                        .cursor
+                        .tombstone(object_id, TombstoneReason::NotExist);
+                    return Err(Error::Rpc(err));
+                }
+                Err(err) => return Err(Error::Rpc(err)),
+            };
         Ok(self
             .rt
             .cursor
@@ -427,7 +470,17 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         object_id: Address,
         mutability: Mutability,
     ) -> Result<SharedObject<T>, Error> {
-        let fetched = tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await?;
+        let fetched =
+            match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
+                Ok(fetched) => fetched,
+                Err(err @ tx::RpcError::Missing(_)) => {
+                    self.rt
+                        .cursor
+                        .tombstone(object_id, TombstoneReason::NotExist);
+                    return Err(Error::Rpc(err));
+                }
+                Err(err) => return Err(Error::Rpc(err)),
+            };
 
         let kind = tx::classify_owner(&fetched.owner);
         let Some(initial_shared_version) = kind.shared_start_version() else {
