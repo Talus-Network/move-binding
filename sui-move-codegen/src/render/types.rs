@@ -38,6 +38,14 @@ pub(crate) fn render_type_ref_in_module(
     render_type_ref(ty, &current, pkg, opts)
 }
 
+pub(crate) fn render_type_ref_in_root(
+    ty: &TypeRef,
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+) -> TokenStream {
+    render_type_ref_root(ty, pkg, opts)
+}
+
 fn render_struct(
     dt: &Datatype,
     fields: &[Field],
@@ -407,6 +415,80 @@ fn render_type_ref(
             } else {
                 let mod_ident = idents::ident(&type_name.module);
                 quote! { super::#mod_ident::#ty_ident }
+            };
+
+            if args.is_empty() {
+                base
+            } else {
+                quote! { #base<#(#args),*> }
+            }
+        }
+        TypeRef::TypeParameter(idx) => {
+            let ident = format_ident!("T{idx}");
+            quote! { #ident }
+        }
+    }
+}
+
+fn render_type_ref_root(
+    ty: &TypeRef,
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+) -> TokenStream {
+    match ty {
+        TypeRef::Address => prelude_type(opts.use_aliases, quote! { Address }),
+        TypeRef::Bool => quote! { bool },
+        TypeRef::U8 => quote! { u8 },
+        TypeRef::U16 => quote! { u16 },
+        TypeRef::U32 => quote! { u32 },
+        TypeRef::U64 => quote! { u64 },
+        TypeRef::U128 => quote! { u128 },
+        TypeRef::U256 => prelude_type(opts.use_aliases, quote! { U256 }),
+        TypeRef::Vector(inner) => {
+            let inner = render_type_ref_root(inner, pkg, opts);
+            quote! { Vec<#inner> }
+        }
+        TypeRef::Ref { mutable, inner } => {
+            let inner = render_type_ref_root(inner, pkg, opts);
+            if *mutable {
+                quote! { &mut #inner }
+            } else {
+                quote! { &#inner }
+            }
+        }
+        TypeRef::Datatype {
+            type_name,
+            type_arguments,
+        } => {
+            let mut args = Vec::new();
+            for a in type_arguments {
+                args.push(render_type_ref_root(a, pkg, opts));
+            }
+
+            if let Some(builtin) = builtins::map_builtin(type_name, opts.use_aliases) {
+                if args.is_empty() {
+                    return builtin.path;
+                }
+                let path = builtin.path;
+                return quote! { #path<#(#args),*> };
+            }
+
+            let is_local = is_local_type(type_name, pkg);
+            if !is_local {
+                let msg = format!(
+                    "sui-move-codegen: unknown external type `{}`; generate bindings for that package too",
+                    display_type_name(type_name)
+                );
+                let msg_lit = syn::LitStr::new(&msg, proc_macro2::Span::call_site());
+                return quote! { compile_error!(#msg_lit) };
+            }
+
+            let ty_ident = idents::ident(&type_name.name);
+            let base = if opts.flatten {
+                quote! { #ty_ident }
+            } else {
+                let mod_ident = idents::ident(&type_name.module);
+                quote! { #mod_ident::#ty_ident }
             };
 
             if args.is_empty() {

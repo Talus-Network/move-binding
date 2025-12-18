@@ -5,15 +5,27 @@ use quote::quote;
 
 use crate::ir::{NormalizedModule, NormalizedPackage};
 
-use super::{calls, idents, types, RenderOptions};
+use super::{calls, idents, tx_ext, types, RenderOptions};
 
 pub(crate) fn render_package_tokens(pkg: &NormalizedPackage, opts: &RenderOptions) -> TokenStream {
+    let root_aliases = if opts.emit_tx_ext && !opts.flatten {
+        aliases(opts)
+    } else {
+        quote! {}
+    };
+
     let package_const = package_const_tokens(pkg, opts);
 
     let mut modules = Vec::new();
     for module in pkg.modules.values() {
         modules.push(render_module(module, pkg, opts));
     }
+
+    let tx_ext = if opts.emit_tx_ext {
+        tx_ext::render_tx_ext(pkg, opts)
+    } else {
+        quote! {}
+    };
 
     let reexports = if opts.flatten || !opts.emit_types {
         quote! {}
@@ -30,8 +42,56 @@ pub(crate) fn render_package_tokens(pkg: &NormalizedPackage, opts: &RenderOption
     };
 
     quote! {
+        #root_aliases
         #package_const
         #(#modules)*
+        #tx_ext
+        #reexports
+    }
+}
+
+pub(crate) fn render_split_mod_rs_tokens(
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+) -> TokenStream {
+    let root_aliases = if opts.emit_tx_ext {
+        aliases(opts)
+    } else {
+        quote! {}
+    };
+
+    let package_const = package_const_tokens(pkg, opts);
+
+    let module_decls = pkg.modules.values().map(|module| {
+        let module_ident = idents::ident(&module.name);
+        quote! { pub mod #module_ident; }
+    });
+
+    let reexports = if !opts.emit_types {
+        quote! {}
+    } else {
+        let mut out = Vec::new();
+        for module in pkg.modules.values() {
+            let module_ident = idents::ident(&module.name);
+            for dt in &module.datatypes {
+                let ty_ident = idents::ident(&dt.name);
+                out.push(quote! { pub use #module_ident::#ty_ident; });
+            }
+        }
+        quote! { #(#out)* }
+    };
+
+    let tx_ext = if opts.emit_tx_ext {
+        tx_ext::render_tx_ext(pkg, opts)
+    } else {
+        quote! {}
+    };
+
+    quote! {
+        #root_aliases
+        #package_const
+        #(#module_decls)*
+        #tx_ext
         #reexports
     }
 }

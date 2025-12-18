@@ -45,6 +45,8 @@ Given a `NormalizedPackage` (either fetched from gRPC or loaded from JSON), this
 - Move datatypes as Rust types (structs use `#[sui_move::move_struct]` via `sui-move`’s `derive`
   feature)
 - Move functions as Rust functions that return `sui_move_call::CallSpec`
+- (optional) A `TxExt` trait implemented for `sui_move_runtime::Tx` (enable with
+  `RenderOptions::emit_tx_ext`)
 
 Those generated call builders are designed to be used directly in higher layers:
 - `sui-move-ptb` can consume `CallSpec` to build a `ProgrammableTransaction`
@@ -190,6 +192,86 @@ let sig = &code[start..sig_end];
 assert!(sig.contains("arg0: &mut impl sm_call::ObjectArg<Obj>"));
 assert!(!sig.contains("TxContext"));
 assert!(code.contains("push_arg_mut(arg0)"));
+```
+
+## Optional: runtime `Tx` extension trait
+
+If you want a slightly more ergonomic “append a call” API on top of `sui-move-runtime`, you can
+ask codegen to emit a `TxExt` trait implemented for `sui_move_runtime::Tx`.
+
+The generated methods do **not** submit the transaction; they only call `Tx::call(...)`. This
+keeps the Read → Tx → Commit boundary explicit.
+
+```rust
+use std::collections::BTreeMap;
+use sui_move_codegen::ir::*;
+use sui_move_codegen::render::{render_package, RenderOptions};
+
+let pkg = NormalizedPackage {
+    storage_id: "0x1".into(),
+    original_id: None,
+    version: 0,
+    modules: BTreeMap::from([(
+        "m".into(),
+        NormalizedModule {
+            name: "m".into(),
+            datatypes: vec![Datatype {
+                type_name: TypeName::parse("0x1::m::Obj").unwrap(),
+                module: "m".into(),
+                name: "Obj".into(),
+                abilities: vec![Ability::Key, Ability::Store],
+                type_parameters: vec![],
+                kind: DatatypeKind::Struct {
+                    fields: vec![Field {
+                        name: "id".into(),
+                        position: 0,
+                        ty: TypeRef::Datatype {
+                            type_name: TypeName::parse("0x2::object::UID").unwrap(),
+                            type_arguments: vec![],
+                        },
+                    }],
+                },
+            }],
+            functions: vec![Function {
+                name: "mutate".into(),
+                visibility: Visibility::Public,
+                is_entry: true,
+                type_parameters: vec![],
+                parameters: vec![
+                    FunctionParam {
+                        name: "arg0".into(),
+                        ty: TypeRef::Ref {
+                            mutable: true,
+                            inner: Box::new(TypeRef::Datatype {
+                                type_name: TypeName::parse("0x1::m::Obj").unwrap(),
+                                type_arguments: vec![],
+                            }),
+                        },
+                    },
+                    FunctionParam {
+                        name: "ctx".into(),
+                        ty: TypeRef::Ref {
+                            mutable: true,
+                            inner: Box::new(TypeRef::Datatype {
+                                type_name: TypeName::parse("0x2::tx_context::TxContext").unwrap(),
+                                type_arguments: vec![],
+                            }),
+                        },
+                    },
+                ],
+                return_types: vec![],
+            }],
+        },
+    )]),
+};
+
+let opts = RenderOptions {
+    emit_tx_ext: true,
+    ..RenderOptions::default()
+};
+let code = render_package(&pkg, &opts);
+assert!(code.contains("pub trait TxExt"));
+assert!(code.contains("fn m__mutate"));
 ```
 
 ## Example: generic type params and ability bounds

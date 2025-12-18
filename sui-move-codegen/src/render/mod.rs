@@ -8,6 +8,7 @@
 //! The generated code is designed to plug into the rest of the workspace:
 //! - generated types implement `sui-move` traits (`MoveType` / `MoveStruct`) and ability markers
 //! - generated functions return `sui-move-call::CallSpec`
+//! - optionally, a `TxExt` trait is emitted to add calls directly to `sui-move-runtime::Tx`
 
 use std::fs;
 use std::path::Path;
@@ -17,6 +18,7 @@ use crate::ir::NormalizedPackage;
 mod builtins;
 mod calls;
 mod idents;
+mod tx_ext;
 mod types;
 mod util;
 
@@ -29,6 +31,15 @@ pub struct RenderOptions {
     pub emit_types: bool,
     /// Emit call builder functions.
     pub emit_calls: bool,
+    /// Emit runtime helpers for `sui-move-runtime` (`TxExt`).
+    ///
+    /// When enabled, generated code includes a `TxExt` trait implemented for
+    /// `sui_move_runtime::Tx<'_, S>`. Each Move function becomes a convenience method like
+    /// `module__function(...)` that appends a `MoveCall` command by calling `Tx::call(...)`.
+    ///
+    /// This is optional so consumers can use the generated bindings without depending on the
+    /// runtime layer.
+    pub emit_tx_ext: bool,
     /// Emit everything into a single flat module (no per-Move-module `mod` blocks).
     pub flatten: bool,
     /// If `true`, include small aliases to reduce verbosity in generated code.
@@ -44,6 +55,7 @@ impl Default for RenderOptions {
         Self {
             emit_types: true,
             emit_calls: true,
+            emit_tx_ext: false,
             flatten: false,
             use_aliases: true,
         }
@@ -96,28 +108,20 @@ pub fn render_package_split(
     let out_dir = out_dir.as_ref();
     fs::create_dir_all(out_dir)?;
 
-    let mut mod_rs = String::new();
-    mod_rs.push_str("/// Package address (the on-chain package object id).\n");
-    mod_rs.push_str(&format!(
-        "pub const PACKAGE: sui_move::prelude::Address = sui_move::prelude::Address::from_static(\"{}\");\n",
-        pkg.storage_id
-    ));
+    // Split output is always “per-module”; `flatten` only applies to single-file rendering.
+    let mut split_opts = opts.clone();
+    split_opts.flatten = false;
 
     for module in pkg.modules.values() {
-        let tokens = util::render_module_file(module, pkg, opts);
+        let tokens = util::render_module_file(module, pkg, &split_opts);
         let code = util::prettify(tokens);
         let filename = format!("{}.rs", module.name);
         fs::write(out_dir.join(filename), code)?;
-
-        let mod_ident = idents::ident(&module.name);
-        mod_rs.push_str(&format!("pub mod {mod_ident};\n"));
-        for dt in &module.datatypes {
-            let ty_ident = idents::ident(&dt.name);
-            mod_rs.push_str(&format!("pub use {mod_ident}::{ty_ident};\n"));
-        }
     }
 
-    fs::write(out_dir.join("mod.rs"), util::insert_item_spacing(&mod_rs))?;
+    let mod_tokens = util::render_split_mod_rs_tokens(pkg, &split_opts);
+    let mod_code = util::prettify(mod_tokens);
+    fs::write(out_dir.join("mod.rs"), mod_code)?;
     Ok(())
 }
 
@@ -203,5 +207,39 @@ mod tests {
         };
         let code = render_package(&demo_pkg(), &opts);
         assert!(code.contains("#[sui_move::move_struct"));
+    }
+
+    #[test]
+    fn renders_tx_ext_trait_when_enabled() {
+        let opts = RenderOptions {
+            emit_tx_ext: true,
+            ..RenderOptions::default()
+        };
+        let code = render_package(&demo_pkg(), &opts);
+        assert!(code.contains("pub trait TxExt"));
+        assert!(code.contains("fn m__mutate"));
+        assert!(code.contains("impl<'a, S> TxExt for sui_move_runtime::Tx<'a, S>"));
+        assert!(code.contains("self.call(m::mutate"));
+    }
+
+    #[test]
+    fn split_output_includes_tx_ext_in_mod_rs() {
+        let opts = RenderOptions {
+            emit_tx_ext: true,
+            ..RenderOptions::default()
+        };
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("sui-move-codegen-{unique}"));
+
+        render_package_split(&demo_pkg(), &opts, &dir).unwrap();
+
+        let mod_rs = std::fs::read_to_string(dir.join("mod.rs")).unwrap();
+        assert!(mod_rs.contains("pub trait TxExt"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
