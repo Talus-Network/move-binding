@@ -1,6 +1,6 @@
 //! Datatype rendering (`struct`/`enum`) for generated bindings.
 //!
-//! Structs are emitted using `#[sui_move_derive::move_struct]` so the generated code automatically
+//! Structs are emitted using `#[sui_move::move_struct]` so the generated code automatically
 //! gets `MoveType` / `MoveStruct` implementations plus ability marker traits.
 //!
 //! Enums are emitted as Rust `enum`s with manual `MoveType` / `MoveStruct` impls. (Move enum
@@ -89,9 +89,15 @@ fn render_struct(
             .unwrap_or_else(|| "Abilities: *(none)*.".to_string()),
     ]);
 
+    let macro_path = if opts.use_aliases {
+        quote! { sm::move_struct }
+    } else {
+        quote! { sui_move::move_struct }
+    };
+
     quote! {
         #doc
-        #[sui_move_derive::move_struct(
+        #[#macro_path(
             address = #address_lit,
             module = #module_lit,
             #name_arg

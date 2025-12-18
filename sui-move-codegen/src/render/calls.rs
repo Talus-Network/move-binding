@@ -122,7 +122,11 @@ fn render_params_and_pushes(
                 quote! { &impl #sm_call::ObjectArg<#obj_ty> }
             };
             params.push(quote! { #arg_ident: #param_ty });
-            pushes.push(quote! { spec.push_arg(#arg_ident).expect("encode arg"); });
+            if ref_mutable {
+                pushes.push(quote! { spec.push_arg_mut(#arg_ident).expect("encode arg"); });
+            } else {
+                pushes.push(quote! { spec.push_arg(#arg_ident).expect("encode arg"); });
+            }
         } else {
             let value_ty = types::render_type_ref_in_module(inner, &module.name, pkg, opts);
             params.push(quote! { #arg_ident: #value_ty });

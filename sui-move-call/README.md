@@ -23,6 +23,10 @@ call descriptions (`CallSpec`). Transaction-building and execution are intention
 - `CallSpec`: `(package, module, function)` + type arguments + call arguments
 - `CallArg`: canonical call-argument representation (re-export of `sui_sdk_types::Input`)
 - `ToCallArg`: convert values into `CallArg` without consuming them
+- `ToCallArgMut`: convert values into `CallArg` for Move `&mut` parameters (shared inputs become
+  mutable)
+- `ObjectArg<T>`: typed object-argument trait used by generated interfaces (accepts any object
+  handle that can be encoded as both `&` and `&mut` in Move)
 - `MoveObject<T>`: typed handle for `Input::ImmutableOrOwned(ObjectReference)`
 - `SharedMoveObject<T>`: typed handle for `Input::Shared(SharedInput)`
 - `ReceivingMoveObject<T>`: typed handle for `Input::Receiving(ObjectReference)`
@@ -47,6 +51,10 @@ This crate keeps the user-facing API small, and maps typed values into Sui's on-
 - `MoveObject<T>` → `CallArg::ImmutableOrOwned(..)`
 - `SharedMoveObject<T>` → `CallArg::Shared(..)`
 - `ReceivingMoveObject<T>` → `CallArg::Receiving(..)`
+
+For Move `&mut` parameters, use `CallSpec::push_arg_mut` (or implement `ToCallArgMut` on your own
+handle type). This matters for shared objects: Sui's shared input encodes mutability in the
+transaction input itself.
 
 These are intentionally separate wrapper types because the on-chain input shapes differ:
 shared objects are described by `(id, initial_shared_version, mutability)`, while

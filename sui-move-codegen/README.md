@@ -42,7 +42,8 @@ Given a `NormalizedPackage` (either fetched from gRPC or loaded from JSON), this
 
 - A `pub const PACKAGE: Address` (the on-chain package id)
 - One Rust module per Move module (or a flat layout via `RenderOptions::flatten`)
-- Move datatypes as Rust types (structs use `#[sui_move_derive::move_struct]`)
+- Move datatypes as Rust types (structs use `#[sui_move::move_struct]` via `sui-move`’s `derive`
+  feature)
 - Move functions as Rust functions that return `sui_move_call::CallSpec`
 
 Those generated call builders are designed to be used directly in higher layers:
@@ -110,6 +111,8 @@ generated Rust API:
 
 - any parameter whose type has the Move `key` ability becomes `&impl ObjectArg<T>` (or `&mut ...`
   if the Move signature is `&mut`)
+- for `&mut` object parameters, the generated builder uses `CallSpec::push_arg_mut` so shared
+  objects are marked mutable in the transaction input when needed
 - any `TxContext` parameter is omitted (higher layers supply it when building the transaction)
 
 ```rust
@@ -186,6 +189,7 @@ let sig = &code[start..sig_end];
 
 assert!(sig.contains("arg0: &mut impl sm_call::ObjectArg<Obj>"));
 assert!(!sig.contains("TxContext"));
+assert!(code.contains("push_arg_mut(arg0)"));
 ```
 
 ## Example: generic type params and ability bounds

@@ -1,7 +1,8 @@
 use std::str::FromStr;
 
 use sui_move_call::{
-    CallArg, CallSpec, MoveObject, ReceivingMoveObject, SharedMoveObject, ToCallArg,
+    CallArg, CallArgError, CallSpec, MoveObject, ReceivingMoveObject, SharedMoveObject, ToCallArg,
+    ToCallArgMut,
 };
 use sui_sdk_types::{Address, Digest, FundsWithdrawal, ObjectReference, TypeTag, WithdrawFrom};
 
@@ -54,6 +55,32 @@ fn shared_move_object_converts_to_shared_input() {
     assert!(shared.is_mutable());
 
     assert!(matches!(shared.to_call_arg().unwrap(), CallArg::Shared(_)));
+}
+
+#[test]
+fn shared_move_object_mut_call_arg_requires_writable() {
+    let object_id = Address::from_str("0x2").unwrap();
+    let shared = SharedMoveObject::<Demo>::immutable(object_id, 7);
+
+    let err = shared.to_call_arg_mutable().unwrap_err();
+    assert!(matches!(
+        err,
+        CallArgError::SharedMutability {
+            object_id: _,
+            actual: _
+        }
+    ));
+}
+
+#[test]
+fn shared_move_object_mut_call_arg_encodes_shared_input() {
+    let object_id = Address::from_str("0x2").unwrap();
+    let shared = SharedMoveObject::<Demo>::mutable(object_id, 7);
+
+    assert!(matches!(
+        shared.to_call_arg_mutable().unwrap(),
+        CallArg::Shared(_)
+    ));
 }
 
 #[test]

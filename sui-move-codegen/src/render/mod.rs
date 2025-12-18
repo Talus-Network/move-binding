@@ -120,3 +120,88 @@ pub fn render_package_split(
     fs::write(out_dir.join("mod.rs"), util::insert_item_spacing(&mod_rs))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::ir::*;
+
+    fn demo_pkg() -> NormalizedPackage {
+        NormalizedPackage {
+            storage_id: "0x1".into(),
+            original_id: None,
+            version: 0,
+            modules: BTreeMap::from([(
+                "m".into(),
+                NormalizedModule {
+                    name: "m".into(),
+                    datatypes: vec![Datatype {
+                        type_name: TypeName::parse("0x1::m::Obj").unwrap(),
+                        module: "m".into(),
+                        name: "Obj".into(),
+                        abilities: vec![Ability::Key, Ability::Store],
+                        type_parameters: vec![],
+                        kind: DatatypeKind::Struct {
+                            fields: vec![Field {
+                                name: "id".into(),
+                                position: 0,
+                                ty: TypeRef::Datatype {
+                                    type_name: TypeName::parse("0x2::object::UID").unwrap(),
+                                    type_arguments: vec![],
+                                },
+                            }],
+                        },
+                    }],
+                    functions: vec![Function {
+                        name: "mutate".into(),
+                        visibility: Visibility::Public,
+                        is_entry: true,
+                        type_parameters: vec![],
+                        parameters: vec![
+                            FunctionParam {
+                                name: "arg0".into(),
+                                ty: TypeRef::Ref {
+                                    mutable: true,
+                                    inner: Box::new(TypeRef::Datatype {
+                                        type_name: TypeName::parse("0x1::m::Obj").unwrap(),
+                                        type_arguments: vec![],
+                                    }),
+                                },
+                            },
+                            FunctionParam {
+                                name: "arg1".into(),
+                                ty: TypeRef::Ref {
+                                    mutable: true,
+                                    inner: Box::new(TypeRef::Datatype {
+                                        type_name: TypeName::parse("0x2::tx_context::TxContext")
+                                            .unwrap(),
+                                        type_arguments: vec![],
+                                    }),
+                                },
+                            },
+                        ],
+                        return_types: vec![],
+                    }],
+                },
+            )]),
+        }
+    }
+
+    #[test]
+    fn renders_mutable_object_params_with_push_arg_mut() {
+        let code = render_package(&demo_pkg(), &RenderOptions::default());
+        assert!(code.contains("push_arg_mut(arg0)"));
+    }
+
+    #[test]
+    fn renders_structs_with_sui_move_move_struct_attribute() {
+        let opts = RenderOptions {
+            use_aliases: false,
+            ..RenderOptions::default()
+        };
+        let code = render_package(&demo_pkg(), &opts);
+        assert!(code.contains("#[sui_move::move_struct"));
+    }
+}
