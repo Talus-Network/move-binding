@@ -837,6 +837,15 @@ pub mod prelude {
 ///     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 /// })
 /// .await?;
+///
+/// let _receipt = sui_move_runtime::tx!(
+///     commit_with(TxOptions { finality: Finality::Executed, ..Default::default() }),
+///     &mut rt,
+///     sender => {
+///         CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
+///     }
+/// )
+/// .await?;
 /// # Ok(())
 /// # }
 /// ```

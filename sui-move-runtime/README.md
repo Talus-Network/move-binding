@@ -379,8 +379,9 @@ Consequences:
 - Clones of the same handle stay in sync (they share the same cell).
 - Only commits performed through the same `Runtime` advance the cursor.
 - `simulate`/`inspect` never update handles (they do not mutate the chain).
-- If other transactions mutate an object you track, use `Read::refresh(&obj)` to refetch the latest
-  reference/owner and overwrite the cursor’s slot.
+- If other transactions mutate an object you track, use `Read::refresh(&obj)` (or
+  `Read::refresh_id` / `Read::refresh_ids`) to refetch the latest reference/owner and overwrite the
+  cursor’s slot.
 
 ### Storing handles in Rust structs
 
@@ -438,7 +439,10 @@ assert_eq!(decoded, 10);
 - `Runtime::with_wait_timeout` controls how long `commit*` waits for checkpoint inclusion when
   checkpointed finality is requested.
 - `TxOptions::sponsor` lets you submit sponsored transactions (gas owner differs from sender).
+- `TxOptions::finality` chooses whether commits request `Checkpointed` or `Executed` finality.
 - `Runtime::with_cursor_snapshot` / `Runtime::cursor_snapshot` provide snapshot/restore for the cursor.
+- `Runtime::sync_transaction` fetches effects by digest and advances the cursor (recovery escape hatch).
+- `Read::refresh_id` / `Read::refresh_ids` refresh cursor state explicitly (external drift escape hatch).
 - `Read::client_mut` gives direct access to the underlying `sui_rpc::Client` when needed.
 
 ## Non-goals
