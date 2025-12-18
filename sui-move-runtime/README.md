@@ -45,7 +45,7 @@ fn touch_coin(coin: &impl ToCallArg, amount: u64) -> CallSpec {
     spec
 }
 
-async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+async fn demo() -> Result<(), Error> {
     let client = sui_rpc::Client::new(sui_rpc::Client::TESTNET_FULLNODE).unwrap();
     let signer = DummySigner;
     let sender: Address = "0x123".parse().unwrap();
@@ -97,7 +97,7 @@ If you want a one-shot action, use the `tx!` macro variants:
 use sui_move_runtime::prelude::*;
 use sui_sdk_types::Address;
 
-# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: Address, coin: Object<sui_move::coin::Coin<sui_move::sui::SUI>>) -> Result<(), Box<dyn std::error::Error>> {
+# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: Address, coin: Object<sui_move::coin::Coin<sui_move::sui::SUI>>) -> Result<(), Error> {
 let _sim = sui_move_runtime::tx!(simulate, &mut rt, sender => {
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 })
@@ -117,7 +117,7 @@ If you need to simulate/inspect the **exact same PTB** before committing it, bui
 ```rust,no_run
 use sui_move_runtime::prelude::*;
 
-# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Box<dyn std::error::Error>> {
+# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
 let mut tx = rt.tx(sender);
 tx.call(CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap())?;
 
@@ -226,16 +226,17 @@ use sui_sdk_types::Address;
 #     }
 # }
 #
-# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-let client = sui_rpc::Client::new(sui_rpc::Client::TESTNET_FULLNODE)?;
-let signer = DummySigner;
-let sender: Address = "0x123".parse()?;
+# async fn demo() -> Result<(), Error> {
+	let client = sui_rpc::Client::new(sui_rpc::Client::TESTNET_FULLNODE).unwrap();
+	let signer = DummySigner;
+	let sender: Address = "0x123".parse().unwrap();
 
-let mut rt = Runtime::new(client, signer)
-    .with_wait_timeout(Duration::from_millis(1)); // deliberately tiny to illustrate timeouts
+	let mut rt = Runtime::new(client, signer)
+	    .with_wait_timeout(Duration::from_millis(1)); // deliberately tiny to illustrate timeouts
 
-let mut tx = rt.tx(sender);
-tx.call(CallSpec::new("0x1".parse()?, "m", "f")?)?;
+	let mut tx = rt.tx(sender);
+	let package: Address = "0x1".parse().unwrap();
+	tx.call(CallSpec::new(package, "m", "f").unwrap())?;
 
 let receipt = tx.commit().await?;
 

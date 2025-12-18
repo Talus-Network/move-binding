@@ -42,6 +42,10 @@ pub enum Error {
     #[error(transparent)]
     Simulate(#[from] tx::SimulateError),
 
+    /// The transaction executed with failure.
+    #[error(transparent)]
+    Execution(#[from] EnsureSuccessError),
+
     /// Decoding Move contents failed.
     #[error("decode object {object_id}: {source}")]
     Decode {
@@ -656,7 +660,7 @@ pub mod prelude {
 /// ```rust,no_run
 /// use sui_move_runtime::prelude::*;
 ///
-/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
 /// let receipt = sui_move_runtime::tx!(&mut rt, sender => {
 ///     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 /// })
@@ -672,7 +676,7 @@ pub mod prelude {
 ///
 /// ```rust,no_run
 /// # use sui_move_runtime::prelude::*;
-/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
 /// let _receipt = sui_move_runtime::tx!(&mut rt, sender => {
 ///     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 ///     CallSpec::new("0x1".parse().unwrap(), "m", "g").unwrap();
@@ -686,7 +690,7 @@ pub mod prelude {
 ///
 /// ```rust,no_run
 /// # use sui_move_runtime::prelude::*;
-/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
 /// let _receipt = sui_move_runtime::tx!(&mut rt, sender, tx => {
 ///     let _out = tx.call(CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap())?;
 /// })
@@ -699,7 +703,7 @@ pub mod prelude {
 ///
 /// ```rust,no_run
 /// # use sui_move_runtime::prelude::*;
-/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
 /// let _sim = sui_move_runtime::tx!(simulate, &mut rt, sender => {
 ///     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 /// })
