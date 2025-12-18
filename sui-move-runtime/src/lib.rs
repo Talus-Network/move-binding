@@ -560,6 +560,58 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
         Ok(self.ptb.call(spec)?)
     }
 
+    /// The gas argument (`Argument::Gas`).
+    ///
+    /// This is useful when building native PTB commands that can refer to the gas coin.
+    pub fn gas(&self) -> sui_sdk_types::Argument {
+        self.ptb.gas()
+    }
+
+    /// Add a `TransferObjects` command.
+    pub fn transfer_objects(
+        &mut self,
+        objects: Vec<sui_sdk_types::Argument>,
+        address: sui_sdk_types::Argument,
+    ) -> Result<(), Error> {
+        Ok(self.ptb.transfer_objects(objects, address)?)
+    }
+
+    /// Add a `SplitCoins` command.
+    pub fn split_coins(
+        &mut self,
+        coin: sui_sdk_types::Argument,
+        amounts: Vec<sui_sdk_types::Argument>,
+    ) -> Result<sui_sdk_types::Argument, Error> {
+        Ok(self.ptb.split_coins(coin, amounts)?)
+    }
+
+    /// Add a `MergeCoins` command.
+    pub fn merge_coins(
+        &mut self,
+        destination: sui_sdk_types::Argument,
+        sources: Vec<sui_sdk_types::Argument>,
+    ) -> Result<(), Error> {
+        Ok(self.ptb.merge_coins(destination, sources)?)
+    }
+
+    /// Add a `MakeMoveVector` command.
+    pub fn make_move_vector(
+        &mut self,
+        type_: Option<TypeTag>,
+        elements: Vec<sui_sdk_types::Argument>,
+    ) -> Result<sui_sdk_types::Argument, Error> {
+        Ok(self.ptb.make_move_vector(type_, elements)?)
+    }
+
+    /// Add a `Publish` command.
+    pub fn publish(
+        &mut self,
+        modules: Vec<Vec<u8>>,
+        dependencies: Vec<Address>,
+    ) -> Result<(), Error> {
+        Ok(self.ptb.publish(modules, dependencies)?)
+    }
+
     /// Finish and return the built PTB without submitting it.
     pub fn finish_ptb(self) -> ProgrammableTransaction {
         self.ptb.finish()
