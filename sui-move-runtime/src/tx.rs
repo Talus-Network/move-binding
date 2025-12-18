@@ -411,12 +411,6 @@ pub(crate) async fn submit_and_wait<S: SuiSigner>(
     default_gas_budget: u64,
     timeout: Duration,
 ) -> Result<Receipt, TxError> {
-    if opts.finality != Finality::Checkpointed {
-        return Err(TxError::UnsupportedFinality {
-            requested: opts.finality,
-        });
-    }
-
     let sponsor = opts.sponsor.unwrap_or(sender);
     let gas_price = match opts.gas_price {
         Some(p) => p,
@@ -464,39 +458,69 @@ pub(crate) async fn submit_and_wait<S: SuiSigner>(
 
     let requested_finality = opts.finality;
 
-    let (response, checkpoint_wait, observed_finality) = match client
-        .execute_transaction_and_wait_for_checkpoint(req, timeout)
-        .await
-    {
-        Ok(response) => (
-            response,
-            CheckpointWaitOutcome::Ok,
-            ObservedFinality::Checkpointed,
-        ),
-        Err(ExecuteAndWaitError::CheckpointTimeout(response)) => (
-            response,
-            CheckpointWaitOutcome::Timeout,
-            ObservedFinality::Executed,
-        ),
-        Err(ExecuteAndWaitError::CheckpointStreamError { response, error }) => (
-            response,
-            CheckpointWaitOutcome::StreamError {
-                error: error.to_string(),
-            },
-            ObservedFinality::Executed,
-        ),
-        Err(err) => {
-            return Err(map_execute_wait_error(
-                err,
-                "execute_transaction_and_wait_for_checkpoint",
-            ))
+    let (executed, checkpoint_wait, observed_finality) = match requested_finality {
+        Finality::Checkpointed => {
+            let (response, checkpoint_wait, observed_finality) = match client
+                .execute_transaction_and_wait_for_checkpoint(req, timeout)
+                .await
+            {
+                Ok(response) => (
+                    response,
+                    CheckpointWaitOutcome::Ok,
+                    ObservedFinality::Checkpointed,
+                ),
+                Err(ExecuteAndWaitError::CheckpointTimeout(response)) => (
+                    response,
+                    CheckpointWaitOutcome::Timeout,
+                    ObservedFinality::Executed,
+                ),
+                Err(ExecuteAndWaitError::CheckpointStreamError { response, error }) => (
+                    response,
+                    CheckpointWaitOutcome::StreamError {
+                        error: error.to_string(),
+                    },
+                    ObservedFinality::Executed,
+                ),
+                Err(err) => {
+                    return Err(map_execute_wait_error(
+                        err,
+                        "execute_transaction_and_wait_for_checkpoint",
+                    ))
+                }
+            };
+
+            let executed = response
+                .into_inner()
+                .transaction
+                .ok_or(TxError::MissingExecuted)?;
+
+            (executed, checkpoint_wait, observed_finality)
+        }
+        Finality::Executed => {
+            let response = client
+                .execution_client()
+                .execute_transaction(req)
+                .await
+                .map_err(|e| TxError::Execute(format!("execute_transaction rpc error: {e}")))?;
+
+            let executed = response
+                .into_inner()
+                .transaction
+                .ok_or(TxError::MissingExecuted)?;
+
+            let observed_finality = if executed.checkpoint.is_some() {
+                ObservedFinality::Checkpointed
+            } else {
+                ObservedFinality::Executed
+            };
+
+            (
+                executed,
+                CheckpointWaitOutcome::NotRequested,
+                observed_finality,
+            )
         }
     };
-
-    let executed = response
-        .into_inner()
-        .transaction
-        .ok_or(TxError::MissingExecuted)?;
 
     receipt_from_executed(
         executed,

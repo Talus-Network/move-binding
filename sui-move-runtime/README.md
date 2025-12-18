@@ -85,7 +85,7 @@ async fn demo() -> Result<(), Error> {
   - `SharedObject<T>`: explicit shared input (`Input::Shared`)
   - `ReceivingObject<T>`: explicit receiving input (`Input::Receiving`)
 - Transaction actions:
-  - `commit`: signs/submits/waits and then updates handles
+  - `commit`: signs/submits and then updates handles (waits for checkpoint inclusion by default)
   - `simulate`: checks enabled, no mutation, no handle updates
   - `inspect`: checks disabled, returns command outputs, no handle updates
 
@@ -193,10 +193,14 @@ All transaction actions take a sender address and are methods on a transaction b
 - `inspect`: calls `simulate_transaction` with checks disabled and asks RPC for
   `command_outputs`. This is meant for debugging and observability, not for guaranteeing that a
   real on-chain commit will succeed.
-- `commit`: builds a full `Transaction`, signs it, submits it, and waits for checkpoint inclusion.
-  It requests `effects.bcs` so the runtime can decode `TransactionEffects` and refresh handles.
-  If checkpoint waiting times out (or the checkpoint stream errors), `commit` still returns a
-  `Receipt` with `digest` + any decoded effects, and marks the finality as observed `Executed`.
+- `commit`: builds a full `Transaction`, signs it, and submits it.
+  - By default it also waits for checkpoint inclusion (`TxOptions::finality = Checkpointed`).
+  - When execution-only finality is requested (`TxOptions::finality = Executed`), the runtime
+    returns as soon as the transaction is executed (effects produced).
+  - In both cases it requests `effects.bcs` so the runtime can decode `TransactionEffects` and
+    refresh handles.
+  - If checkpoint waiting times out (or the checkpoint stream errors), `commit` still returns a
+    `Receipt` with `digest` + any decoded effects, and marks the observed finality as `Executed`.
 
 ## Receipts, finality, and recovery
 
@@ -287,6 +291,7 @@ assert_eq!(ptb.commands.len(), 1);
 - `TxOptions::gas_price`: defaults to the reference gas price from RPC
 - `TxOptions::gas_budget`: defaults to `Runtime::default_gas_budget`
 - `TxOptions::expiration`: optional TTL
+- `TxOptions::finality`: `Checkpointed` (default) or `Executed`
 
 `simulate`/`inspect` do not sign or submit, and do not currently model explicit gas payment
 configuration (they rely on the simulation RPC).
@@ -416,7 +421,8 @@ assert_eq!(decoded, 10);
 ## Configuration and escape hatches
 
 - `Runtime::with_default_gas_budget` and `TxOptions::gas_budget` configure gas budget for commits.
-- `Runtime::with_wait_timeout` controls how long `commit` waits for checkpoint inclusion.
+- `Runtime::with_wait_timeout` controls how long `commit*` waits for checkpoint inclusion when
+  checkpointed finality is requested.
 - `TxOptions::sponsor` lets you submit sponsored transactions (gas owner differs from sender).
 - `Runtime::with_cursor_snapshot` / `Runtime::cursor_snapshot` provide snapshot/restore for the cursor.
 - `Read::client_mut` gives direct access to the underlying `sui_rpc::Client` when needed.
