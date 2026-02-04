@@ -6,6 +6,14 @@ This crate solves one problem: **represent Move types precisely in Rust** (inclu
 `TypeTag`/`StructTag` and ability surface), so you can build strongly-typed Sui clients and
 helpers that can **verify type tags and decode BCS safely**.
 
+## Where it fits
+
+`sui-move` is the bottom layer of this repository’s stack (`MODEL.md`). Higher layers use it to:
+
+- name types precisely when building Move calls (`TypeTag`/`StructTag`),
+- express Move ability constraints as normal Rust bounds,
+- verify on-chain type tags and decode BCS in a controlled way.
+
 ## Quickstart
 
 The core traits are `MoveType` and `MoveStruct`.
@@ -56,6 +64,24 @@ impl MoveStruct for MyCounter {
 }
 
 impl HasStore for MyCounter {}
+```
+
+### Macros (feature `derive`)
+
+If you prefer, enable the `derive` feature to use attribute macros for defining Move-shaped
+structs.
+
+```rust
+#[cfg(feature = "derive")]
+mod example {
+    use sui_move::move_struct;
+
+    #[move_struct(address = "0x1", module = "vault", abilities = "key, store")]
+    pub struct Vault {
+        pub id: sui_move::types::UID,
+        pub value: u64,
+    }
+}
 ```
 
 ### Move abilities as Rust bounds
@@ -132,4 +158,3 @@ let _tag = <Coin<SUI> as MoveType>::type_tag_static();
 - `sui_move::containers`: Move framework container shapes
 - `sui_move::primitives`: Sui framework “primitive” structs
 - `sui_move::decode`: ability-aware decode helpers
-

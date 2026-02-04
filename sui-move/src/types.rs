@@ -8,7 +8,7 @@ use crate::{parse_address, parse_identifier, HasCopy, HasDrop, HasStore, MoveStr
 
 /// Move `0x2::object::ID`.
 ///
-/// In the Sui framework this is a thin wrapper around a `vector<u8>` that stores an object ID.
+/// In the Sui framework this wraps a Move `address` for compact BCS encoding.
 ///
 /// # Example
 /// ```
@@ -20,7 +20,7 @@ use crate::{parse_address, parse_identifier, HasCopy, HasDrop, HasStore, MoveStr
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ID {
-    pub bytes: Vec<u8>,
+    pub bytes: sui_sdk_types::Address,
 }
 
 impl MoveType for ID {
