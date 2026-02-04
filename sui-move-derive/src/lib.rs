@@ -99,6 +99,7 @@ pub fn move_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[cfg(test)]
 mod tests {
     use super::args::MoveStructArgs;
+    use proc_macro2::Span;
     use std::collections::BTreeMap;
 
     #[test]
@@ -122,5 +123,72 @@ mod tests {
             vec!["store".to_string(), "copy".to_string()],
         );
         assert_eq!(args.type_abilities, expected);
+    }
+
+    #[test]
+    fn expands_struct_with_where_bounds_on_definition() {
+        let args: MoveStructArgs = syn::parse_quote!(
+            address = "0x1",
+            module = "m",
+            type_abilities = "T0: store"
+        );
+
+        let input: syn::DeriveInput = syn::parse_quote!(
+            pub struct S<T0> {
+                pub v: Vec<T0>,
+            }
+        );
+
+        let out = crate::expand::expand_move_struct(args, input).expect("expand");
+        let file: syn::File = syn::parse2(out).expect("parse expanded tokens as a file");
+
+        let struct_item = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Struct(s) if s.ident == syn::Ident::new("S", Span::call_site()) => {
+                    Some(s)
+                }
+                _ => None,
+            })
+            .expect("struct S in output");
+
+        let where_clause = struct_item
+            .generics
+            .where_clause
+            .as_ref()
+            .expect("where clause on struct definition");
+
+        let t0_bounds = where_clause
+            .predicates
+            .iter()
+            .find_map(|pred| match pred {
+                syn::WherePredicate::Type(p) => match &p.bounded_ty {
+                    syn::Type::Path(ty) if ty.qself.is_none() => ty
+                        .path
+                        .get_ident()
+                        .and_then(|ident| (ident == "T0").then_some(&p.bounds)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("where predicate for T0");
+
+        fn has_bound(
+            bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>,
+            name: &str,
+        ) -> bool {
+            bounds.iter().any(|b| match b {
+                syn::TypeParamBound::Trait(tb) => tb
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|seg| seg.ident == name),
+                _ => false,
+            })
+        }
+
+        assert!(has_bound(t0_bounds, "MoveType"));
+        assert!(has_bound(t0_bounds, "HasStore"));
     }
 }
