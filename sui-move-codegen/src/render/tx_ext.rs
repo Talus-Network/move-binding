@@ -8,9 +8,13 @@ use quote::{format_ident, quote};
 
 use crate::ir::{Ability, Function, NormalizedModule, NormalizedPackage, TypeRef, Visibility};
 
-use super::{builtins, idents, types, RenderOptions};
+use super::{builtins, idents, types, ExternalResolver, RenderOptions};
 
-pub(crate) fn render_tx_ext(pkg: &NormalizedPackage, opts: &RenderOptions) -> TokenStream {
+pub(crate) fn render_tx_ext(
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
+) -> TokenStream {
     if !opts.emit_calls {
         // Without call builders, the extension methods would need to inline call construction,
         // which defeats the layering goal.
@@ -26,7 +30,7 @@ pub(crate) fn render_tx_ext(pkg: &NormalizedPackage, opts: &RenderOptions) -> To
             .iter()
             .filter(|f| matches!(f.visibility, Visibility::Public))
         {
-            let (trait_method, impl_method) = render_method(module, f, pkg, opts);
+            let (trait_method, impl_method) = render_method(module, f, pkg, opts, resolver);
             trait_methods.push(trait_method);
             impl_methods.push(impl_method);
         }
@@ -63,6 +67,7 @@ fn render_method(
     f: &Function,
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> (TokenStream, TokenStream) {
     let tx_method_ident = idents::ident(&format!("{}__{}", module.name, f.name));
     let call_fn_ident = idents::ident(&f.name);
@@ -80,7 +85,13 @@ fn render_method(
     let bounds = type_param_bounds(f, opts.use_aliases);
     let where_clause = where_clause(&bounds);
 
-    let (params, args, skipped_tx_context) = render_params_and_args(f, pkg, opts);
+    let sdk = if opts.use_aliases {
+        quote! { sm::__private::sui_sdk_types }
+    } else {
+        quote! { sui_move::__private::sui_sdk_types }
+    };
+
+    let (params, args, skipped_tx_context) = render_params_and_args(f, pkg, opts, resolver);
 
     let signature = move_signature_string(module, f);
     let doc = doc_lines(&[
@@ -101,14 +112,14 @@ fn render_method(
     let signature = quote! {
         #doc
         fn #tx_method_ident #fn_generics (&mut self, #(#params),*)
-            -> Result<sui_sdk_types::Argument, sui_move_runtime::Error>
+            -> Result<#sdk::Argument, sui_move_runtime::Error>
             #where_clause
         ;
     };
 
     let implementation = quote! {
         fn #tx_method_ident #fn_generics (&mut self, #(#params),*)
-            -> Result<sui_sdk_types::Argument, sui_move_runtime::Error>
+            -> Result<#sdk::Argument, sui_move_runtime::Error>
             #where_clause
         {
             self.call(#call_expr)
@@ -122,6 +133,7 @@ fn render_params_and_args(
     f: &Function,
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> (Vec<TokenStream>, Vec<TokenStream>, bool) {
     let sm_call = if opts.use_aliases {
         quote! { sm_call }
@@ -144,9 +156,9 @@ fn render_params_and_args(
         arg_idx += 1;
         let (ref_mutable, inner) = split_ref(&p.ty);
 
-        let is_object = is_object_type(inner, f, pkg, opts);
+        let is_object = is_object_type(inner, f, pkg, opts, resolver);
         if is_object {
-            let obj_ty = types::render_type_ref_in_root(inner, pkg, opts);
+            let obj_ty = types::render_type_ref_in_root(inner, pkg, opts, resolver);
             let param_ty = if ref_mutable {
                 quote! { &mut impl #sm_call::ObjectArg<#obj_ty> }
             } else {
@@ -154,7 +166,7 @@ fn render_params_and_args(
             };
             params.push(quote! { #arg_ident: #param_ty });
         } else {
-            let value_ty = types::render_type_ref_in_root(inner, pkg, opts);
+            let value_ty = types::render_type_ref_in_root(inner, pkg, opts, resolver);
             params.push(quote! { #arg_ident: #value_ty });
         }
 
@@ -188,11 +200,17 @@ fn is_object_type(
     f: &Function,
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> bool {
     match ty {
         TypeRef::Datatype { type_name, .. } => {
             if let Some(builtin) = builtins::map_builtin(type_name, opts.use_aliases) {
                 return builtin.is_key;
+            }
+            if let Some(resolver) = resolver {
+                if let Some(is_key) = resolver.type_has_key(type_name) {
+                    return is_key;
+                }
             }
             pkg.modules
                 .get(&type_name.module)

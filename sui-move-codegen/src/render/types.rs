@@ -11,16 +11,17 @@ use quote::{format_ident, quote};
 
 use crate::ir::{Ability, Datatype, DatatypeKind, Field, NormalizedPackage, TypeName, TypeRef};
 
-use super::{builtins, idents, RenderOptions};
+use super::{builtins, idents, ExternalResolver, RenderOptions};
 
 pub(crate) fn render_datatype(
     dt: &Datatype,
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> TokenStream {
     match &dt.kind {
-        DatatypeKind::Struct { fields } => render_struct(dt, fields, pkg, opts),
-        DatatypeKind::Enum { variants } => render_enum(dt, variants, pkg, opts),
+        DatatypeKind::Struct { fields } => render_struct(dt, fields, pkg, opts, resolver),
+        DatatypeKind::Enum { variants } => render_enum(dt, variants, pkg, opts, resolver),
     }
 }
 
@@ -29,21 +30,23 @@ pub(crate) fn render_type_ref_in_module(
     current_module: &str,
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> TokenStream {
     let current = TypeName {
         address: pkg.storage_id.clone(),
         module: current_module.to_string(),
         name: "<current>".to_string(),
     };
-    render_type_ref(ty, &current, pkg, opts)
+    render_type_ref(ty, &current, pkg, opts, resolver)
 }
 
 pub(crate) fn render_type_ref_in_root(
     ty: &TypeRef,
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> TokenStream {
-    render_type_ref_root(ty, pkg, opts)
+    render_type_ref_root(ty, pkg, opts, resolver)
 }
 
 fn render_struct(
@@ -51,6 +54,7 @@ fn render_struct(
     fields: &[Field],
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> TokenStream {
     let type_ident = idents::ident(&dt.name);
     let type_params = type_params_idents(dt.type_parameters.len());
@@ -85,7 +89,7 @@ fn render_struct(
 
     let fields_tokens = fields.iter().map(|f| {
         let ident = idents::ident(&f.name);
-        let ty = render_type_ref(&f.ty, &dt.type_name, pkg, opts);
+        let ty = render_type_ref(&f.ty, &dt.type_name, pkg, opts, resolver);
         quote! { pub #ident: #ty, }
     });
 
@@ -124,6 +128,7 @@ fn render_enum(
     variants: &[crate::ir::Variant],
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> TokenStream {
     let type_ident = idents::ident(&dt.name);
     let type_params = type_params_idents(dt.type_parameters.len());
@@ -154,7 +159,7 @@ fn render_enum(
         }
         let fields = v.fields.iter().map(|f| {
             let field_ident = idents::ident(&f.name);
-            let field_ty = render_type_ref(&f.ty, &dt.type_name, pkg, opts);
+            let field_ty = render_type_ref(&f.ty, &dt.type_name, pkg, opts, resolver);
             quote! { #field_ident: #field_ty, }
         });
         quote! { #variant_ident { #(#fields)* }, }
@@ -355,6 +360,7 @@ fn render_type_ref(
     current_type: &TypeName,
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> TokenStream {
     match ty {
         TypeRef::Address => prelude_type(opts.use_aliases, quote! { Address }),
@@ -369,11 +375,11 @@ fn render_type_ref(
             prelude_type(opts.use_aliases, quote! { U256 })
         }
         TypeRef::Vector(inner) => {
-            let inner = render_type_ref(inner, current_type, pkg, opts);
+            let inner = render_type_ref(inner, current_type, pkg, opts, resolver);
             quote! { Vec<#inner> }
         }
         TypeRef::Ref { mutable, inner } => {
-            let inner = render_type_ref(inner, current_type, pkg, opts);
+            let inner = render_type_ref(inner, current_type, pkg, opts, resolver);
             if *mutable {
                 quote! { &mut #inner }
             } else {
@@ -386,7 +392,7 @@ fn render_type_ref(
         } => {
             let mut args = Vec::new();
             for a in type_arguments {
-                args.push(render_type_ref(a, current_type, pkg, opts));
+                args.push(render_type_ref(a, current_type, pkg, opts, resolver));
             }
 
             if let Some(builtin) = builtins::map_builtin(type_name, opts.use_aliases) {
@@ -399,6 +405,20 @@ fn render_type_ref(
 
             let is_local = is_local_type(type_name, pkg);
             if !is_local {
+                if let Some(resolver) = resolver {
+                    if let Some(dep_crate) = resolver.crate_name_for_address(&type_name.address) {
+                        let crate_ident = crate_ident(dep_crate);
+                        let mod_ident = idents::ident(&type_name.module);
+                        let ty_ident = idents::ident(&type_name.name);
+                        let base = quote! { #crate_ident::#mod_ident::#ty_ident };
+                        return if args.is_empty() {
+                            base
+                        } else {
+                            quote! { #base<#(#args),*> }
+                        };
+                    }
+                }
+
                 // Keep generation deterministic: unknown external types must be supplied by the
                 // consumer (e.g. another generated package crate).
                 let msg = format!(
@@ -434,6 +454,7 @@ fn render_type_ref_root(
     ty: &TypeRef,
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> TokenStream {
     match ty {
         TypeRef::Address => prelude_type(opts.use_aliases, quote! { Address }),
@@ -445,11 +466,11 @@ fn render_type_ref_root(
         TypeRef::U128 => quote! { u128 },
         TypeRef::U256 => prelude_type(opts.use_aliases, quote! { U256 }),
         TypeRef::Vector(inner) => {
-            let inner = render_type_ref_root(inner, pkg, opts);
+            let inner = render_type_ref_root(inner, pkg, opts, resolver);
             quote! { Vec<#inner> }
         }
         TypeRef::Ref { mutable, inner } => {
-            let inner = render_type_ref_root(inner, pkg, opts);
+            let inner = render_type_ref_root(inner, pkg, opts, resolver);
             if *mutable {
                 quote! { &mut #inner }
             } else {
@@ -462,7 +483,7 @@ fn render_type_ref_root(
         } => {
             let mut args = Vec::new();
             for a in type_arguments {
-                args.push(render_type_ref_root(a, pkg, opts));
+                args.push(render_type_ref_root(a, pkg, opts, resolver));
             }
 
             if let Some(builtin) = builtins::map_builtin(type_name, opts.use_aliases) {
@@ -475,6 +496,20 @@ fn render_type_ref_root(
 
             let is_local = is_local_type(type_name, pkg);
             if !is_local {
+                if let Some(resolver) = resolver {
+                    if let Some(dep_crate) = resolver.crate_name_for_address(&type_name.address) {
+                        let crate_ident = crate_ident(dep_crate);
+                        let mod_ident = idents::ident(&type_name.module);
+                        let ty_ident = idents::ident(&type_name.name);
+                        let base = quote! { #crate_ident::#mod_ident::#ty_ident };
+                        return if args.is_empty() {
+                            base
+                        } else {
+                            quote! { #base<#(#args),*> }
+                        };
+                    }
+                }
+
                 let msg = format!(
                     "sui-move-codegen: unknown external type `{}`; generate bindings for that package too",
                     display_type_name(type_name)
@@ -502,6 +537,10 @@ fn render_type_ref_root(
             quote! { #ident }
         }
     }
+}
+
+fn crate_ident(name: &str) -> syn::Ident {
+    idents::ident(&name.replace('-', "_"))
 }
 
 fn prelude_type(use_aliases: bool, name: TokenStream) -> TokenStream {

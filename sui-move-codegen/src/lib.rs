@@ -11,6 +11,9 @@ pub mod ir;
 /// Render normalized metadata into Rust source.
 pub mod render;
 
+/// High-level helpers for generating bindings across packages.
+pub mod workspace;
+
 pub use crate::source::fetch_package;
 pub use crate::source::Address;
 pub use crate::source::Client;

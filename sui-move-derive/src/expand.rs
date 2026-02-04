@@ -213,9 +213,6 @@ pub(crate) fn expand_move_struct(
     };
 
     let mut derives: Vec<syn::Path> = Vec::new();
-    if has_copy {
-        derives.push(parse_quote!(::core::clone::Clone));
-    }
     derives.extend([
         parse_quote!(::core::fmt::Debug),
         parse_quote!(::core::cmp::PartialEq),
@@ -325,6 +322,24 @@ pub(crate) fn expand_move_struct(
 
     let (impl_generics, ty_generics, where_clause) = expanded_generics.split_for_impl();
 
+    let clone_impl = if has_copy {
+        let inits = fields.iter().filter_map(|f| {
+            let ident = f.ident.as_ref()?;
+            Some(quote! { #ident: ::core::clone::Clone::clone(&self.#ident), })
+        });
+        quote! {
+            impl #impl_generics ::core::clone::Clone for #struct_ident #ty_generics #where_clause {
+                fn clone(&self) -> Self {
+                    Self {
+                        #(#inits)*
+                    }
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     let ability_impls = {
         let mut impls = Vec::new();
         if has_key {
@@ -352,6 +367,8 @@ pub(crate) fn expand_move_struct(
 
     Ok(quote! {
         #output_struct
+
+        #clone_impl
 
         impl #impl_generics ::sui_move::MoveType for #struct_ident #ty_generics #where_clause {
             fn type_tag_static() -> ::sui_move::__private::sui_sdk_types::TypeTag {

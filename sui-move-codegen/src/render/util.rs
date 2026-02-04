@@ -5,9 +5,13 @@ use quote::quote;
 
 use crate::ir::{NormalizedModule, NormalizedPackage};
 
-use super::{calls, idents, tx_ext, types, RenderOptions};
+use super::{calls, idents, tx_ext, types, ExternalResolver, RenderOptions};
 
-pub(crate) fn render_package_tokens(pkg: &NormalizedPackage, opts: &RenderOptions) -> TokenStream {
+pub(crate) fn render_package_tokens(
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
+) -> TokenStream {
     let root_aliases = if opts.emit_tx_ext && !opts.flatten {
         aliases(opts)
     } else {
@@ -18,11 +22,11 @@ pub(crate) fn render_package_tokens(pkg: &NormalizedPackage, opts: &RenderOption
 
     let mut modules = Vec::new();
     for module in pkg.modules.values() {
-        modules.push(render_module(module, pkg, opts));
+        modules.push(render_module(module, pkg, opts, resolver));
     }
 
     let tx_ext = if opts.emit_tx_ext {
-        tx_ext::render_tx_ext(pkg, opts)
+        tx_ext::render_tx_ext(pkg, opts, resolver)
     } else {
         quote! {}
     };
@@ -53,6 +57,7 @@ pub(crate) fn render_package_tokens(pkg: &NormalizedPackage, opts: &RenderOption
 pub(crate) fn render_split_mod_rs_tokens(
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> TokenStream {
     let root_aliases = if opts.emit_tx_ext {
         aliases(opts)
@@ -82,7 +87,7 @@ pub(crate) fn render_split_mod_rs_tokens(
     };
 
     let tx_ext = if opts.emit_tx_ext {
-        tx_ext::render_tx_ext(pkg, opts)
+        tx_ext::render_tx_ext(pkg, opts, resolver)
     } else {
         quote! {}
     };
@@ -100,6 +105,7 @@ pub(crate) fn render_module_file(
     module: &NormalizedModule,
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> TokenStream {
     let aliases = aliases(opts);
 
@@ -109,11 +115,11 @@ pub(crate) fn render_module_file(
             module
                 .datatypes
                 .iter()
-                .map(|dt| types::render_datatype(dt, pkg, opts)),
+                .map(|dt| types::render_datatype(dt, pkg, opts, resolver)),
         );
     }
     if opts.emit_calls {
-        items.extend(calls::render_functions(module, pkg, opts));
+        items.extend(calls::render_functions(module, pkg, opts, resolver));
     }
 
     quote! {
@@ -127,6 +133,7 @@ pub(crate) fn render_module(
     module: &NormalizedModule,
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
 ) -> TokenStream {
     let aliases = aliases(opts);
 
@@ -136,11 +143,11 @@ pub(crate) fn render_module(
             module
                 .datatypes
                 .iter()
-                .map(|dt| types::render_datatype(dt, pkg, opts)),
+                .map(|dt| types::render_datatype(dt, pkg, opts, resolver)),
         );
     }
     if opts.emit_calls {
-        items.extend(calls::render_functions(module, pkg, opts));
+        items.extend(calls::render_functions(module, pkg, opts, resolver));
     }
 
     if opts.flatten {

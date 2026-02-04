@@ -14,6 +14,8 @@ pub mod coin;
 pub mod linked_table;
 pub mod object_bag;
 pub mod object_table;
+pub mod priority_queue;
+pub mod string;
 pub mod sui;
 pub mod tx_context;
 pub mod type_name;

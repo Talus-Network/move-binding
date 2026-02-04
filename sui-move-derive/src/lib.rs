@@ -191,4 +191,54 @@ mod tests {
         assert!(has_bound(t0_bounds, "MoveType"));
         assert!(has_bound(t0_bounds, "HasStore"));
     }
+
+    #[test]
+    fn expands_copy_phantom_struct_without_clone_bound_on_phantom_params() {
+        let args: MoveStructArgs = syn::parse_quote!(
+            address = "0x1",
+            module = "m",
+            abilities = "copy",
+            phantoms = "T0"
+        );
+
+        let input: syn::DeriveInput = syn::parse_quote!(
+            pub struct S<T0> {
+                pub v: Vec<u64>,
+            }
+        );
+
+        let out = crate::expand::expand_move_struct(args, input).expect("expand");
+        let file: syn::File = syn::parse2(out).expect("parse expanded tokens as a file");
+
+        let clone_impl = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Impl(imp) => match &imp.trait_ {
+                    Some((_, path, _))
+                        if path.segments.last().is_some_and(|seg| seg.ident == "Clone") =>
+                    {
+                        Some(imp)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("Clone impl in output");
+
+        let t0 = clone_impl
+            .generics
+            .params
+            .iter()
+            .find_map(|p| match p {
+                syn::GenericParam::Type(t) if t.ident == "T0" => Some(t),
+                _ => None,
+            })
+            .expect("T0 generic param in Clone impl");
+
+        assert!(
+            t0.bounds.is_empty(),
+            "Clone impl should not add `T0: Clone` for phantom params"
+        );
+    }
 }

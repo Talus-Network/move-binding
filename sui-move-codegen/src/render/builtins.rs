@@ -34,8 +34,16 @@ pub(crate) fn map_builtin(type_name: &TypeName, use_aliases: bool) -> Option<Bui
             (sm(use_aliases, quote! { type_name::TypeName }), false)
         }
         ("0x1", "ascii", "String") => (sm(use_aliases, quote! { ascii::String }), false),
+        ("0x1", "string", "String") => (sm(use_aliases, quote! { string::String }), false),
         ("0x2", "vec_map", "VecMap") => (sm(use_aliases, quote! { vec_map::VecMap }), false),
         ("0x2", "vec_set", "VecSet") => (sm(use_aliases, quote! { vec_set::VecSet }), false),
+        ("0x2", "priority_queue", "Entry") => {
+            (sm(use_aliases, quote! { priority_queue::Entry }), false)
+        }
+        ("0x2", "priority_queue", "PriorityQueue") => (
+            sm(use_aliases, quote! { priority_queue::PriorityQueue }),
+            false,
+        ),
         ("0x2", "object_bag", "ObjectBag") => {
             (sm(use_aliases, quote! { object_bag::ObjectBag }), true)
         }

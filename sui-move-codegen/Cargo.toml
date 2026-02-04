@@ -15,3 +15,6 @@ syn = { workspace = true }
 prettyplease = { workspace = true }
 sui-rpc = { workspace = true }
 sui-sdk-types = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

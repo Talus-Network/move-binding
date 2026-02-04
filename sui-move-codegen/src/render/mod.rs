@@ -17,10 +17,13 @@ use crate::ir::NormalizedPackage;
 
 mod builtins;
 mod calls;
+mod externals;
 mod idents;
 mod tx_ext;
 mod types;
 mod util;
+
+pub use externals::ExternalResolver;
 
 /// Options controlling what gets emitted.
 ///
@@ -90,7 +93,20 @@ impl Default for RenderOptions {
 /// assert!(code.contains("pub const PACKAGE"));
 /// ```
 pub fn render_package(pkg: &NormalizedPackage, opts: &RenderOptions) -> String {
-    let tokens = util::render_package_tokens(pkg, opts);
+    let tokens = util::render_package_tokens(pkg, opts, None);
+    util::prettify(tokens)
+}
+
+/// Render a normalized package into a single Rust source string, resolving external packages.
+///
+/// If an external type reference cannot be resolved via `resolver`, the generated code will
+/// include a `compile_error!` (same behavior as [`render_package`]).
+pub fn render_package_with_resolver(
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+    resolver: &ExternalResolver,
+) -> String {
+    let tokens = util::render_package_tokens(pkg, opts, Some(resolver));
     util::prettify(tokens)
 }
 
@@ -113,13 +129,39 @@ pub fn render_package_split(
     split_opts.flatten = false;
 
     for module in pkg.modules.values() {
-        let tokens = util::render_module_file(module, pkg, &split_opts);
+        let tokens = util::render_module_file(module, pkg, &split_opts, None);
         let code = util::prettify(tokens);
         let filename = format!("{}.rs", module.name);
         fs::write(out_dir.join(filename), code)?;
     }
 
-    let mod_tokens = util::render_split_mod_rs_tokens(pkg, &split_opts);
+    let mod_tokens = util::render_split_mod_rs_tokens(pkg, &split_opts, None);
+    let mod_code = util::prettify(mod_tokens);
+    fs::write(out_dir.join("mod.rs"), mod_code)?;
+    Ok(())
+}
+
+/// Render a normalized package into multiple files, resolving external packages.
+pub fn render_package_split_with_resolver(
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+    resolver: &ExternalResolver,
+    out_dir: impl AsRef<Path>,
+) -> std::io::Result<()> {
+    let out_dir = out_dir.as_ref();
+    fs::create_dir_all(out_dir)?;
+
+    let mut split_opts = opts.clone();
+    split_opts.flatten = false;
+
+    for module in pkg.modules.values() {
+        let tokens = util::render_module_file(module, pkg, &split_opts, Some(resolver));
+        let code = util::prettify(tokens);
+        let filename = format!("{}.rs", module.name);
+        fs::write(out_dir.join(filename), code)?;
+    }
+
+    let mod_tokens = util::render_split_mod_rs_tokens(pkg, &split_opts, Some(resolver));
     let mod_code = util::prettify(mod_tokens);
     fs::write(out_dir.join("mod.rs"), mod_code)?;
     Ok(())
@@ -241,5 +283,148 @@ mod tests {
         assert!(mod_rs.contains("pub trait TxExt"));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn renders_external_types_via_resolver_as_dep_crate_module_type() {
+        let dep = NormalizedPackage {
+            storage_id: "0xb".into(),
+            original_id: None,
+            version: 0,
+            modules: BTreeMap::from([(
+                "dep".into(),
+                NormalizedModule {
+                    name: "dep".into(),
+                    datatypes: vec![Datatype {
+                        type_name: TypeName::parse("0xb::dep::Obj").unwrap(),
+                        module: "dep".into(),
+                        name: "Obj".into(),
+                        abilities: vec![Ability::Key, Ability::Store],
+                        type_parameters: vec![],
+                        kind: DatatypeKind::Struct { fields: vec![] },
+                    }],
+                    functions: vec![],
+                },
+            )]),
+        };
+
+        let root = NormalizedPackage {
+            storage_id: "0xa".into(),
+            original_id: None,
+            version: 0,
+            modules: BTreeMap::from([(
+                "m".into(),
+                NormalizedModule {
+                    name: "m".into(),
+                    datatypes: vec![Datatype {
+                        type_name: TypeName::parse("0xa::m::UsesDep").unwrap(),
+                        module: "m".into(),
+                        name: "UsesDep".into(),
+                        abilities: vec![Ability::Store],
+                        type_parameters: vec![],
+                        kind: DatatypeKind::Struct {
+                            fields: vec![Field {
+                                name: "obj".into(),
+                                position: 0,
+                                ty: TypeRef::Datatype {
+                                    type_name: TypeName::parse("0xb::dep::Obj").unwrap(),
+                                    type_arguments: vec![],
+                                },
+                            }],
+                        },
+                    }],
+                    functions: vec![Function {
+                        name: "take".into(),
+                        visibility: Visibility::Public,
+                        is_entry: true,
+                        type_parameters: vec![],
+                        parameters: vec![FunctionParam {
+                            name: "arg0".into(),
+                            ty: TypeRef::Ref {
+                                mutable: true,
+                                inner: Box::new(TypeRef::Datatype {
+                                    type_name: TypeName::parse("0xb::dep::Obj").unwrap(),
+                                    type_arguments: vec![],
+                                }),
+                            },
+                        }],
+                        return_types: vec![],
+                    }],
+                },
+            )]),
+        };
+
+        let mut resolver = ExternalResolver::new();
+        resolver.add_package(&dep, "dep-crate");
+
+        let code = render_package_with_resolver(&root, &RenderOptions::default(), &resolver);
+
+        assert!(code.contains("dep_crate::dep::Obj"));
+        assert!(!code.contains("compile_error!"));
+        assert!(code.contains("arg0: &mut impl sm_call::ObjectArg<dep_crate::dep::Obj>"));
+    }
+
+    #[test]
+    fn external_key_ability_resolution_is_robust_to_upgrades() {
+        let dep = NormalizedPackage {
+            storage_id: "0xb01".into(),
+            original_id: Some("0xb00".into()),
+            version: 0,
+            modules: BTreeMap::from([(
+                "dep".into(),
+                NormalizedModule {
+                    name: "dep".into(),
+                    datatypes: vec![Datatype {
+                        // Simulate metadata that encodes the storage id.
+                        type_name: TypeName::parse("0xb01::dep::Obj").unwrap(),
+                        module: "dep".into(),
+                        name: "Obj".into(),
+                        abilities: vec![Ability::Key, Ability::Store],
+                        type_parameters: vec![],
+                        kind: DatatypeKind::Struct { fields: vec![] },
+                    }],
+                    functions: vec![],
+                },
+            )]),
+        };
+
+        let root = NormalizedPackage {
+            storage_id: "0xa".into(),
+            original_id: None,
+            version: 0,
+            modules: BTreeMap::from([(
+                "m".into(),
+                NormalizedModule {
+                    name: "m".into(),
+                    datatypes: vec![],
+                    functions: vec![Function {
+                        name: "take".into(),
+                        visibility: Visibility::Public,
+                        is_entry: true,
+                        type_parameters: vec![],
+                        // Simulate a type reference that uses the original id.
+                        parameters: vec![FunctionParam {
+                            name: "arg0".into(),
+                            ty: TypeRef::Ref {
+                                mutable: true,
+                                inner: Box::new(TypeRef::Datatype {
+                                    type_name: TypeName::parse("0xb00::dep::Obj").unwrap(),
+                                    type_arguments: vec![],
+                                }),
+                            },
+                        }],
+                        return_types: vec![],
+                    }],
+                },
+            )]),
+        };
+
+        let mut resolver = ExternalResolver::new();
+        resolver.add_package(&dep, "dep-crate");
+
+        let code = render_package_with_resolver(&root, &RenderOptions::default(), &resolver);
+
+        // Key ability should still be detected, so the param becomes an object arg.
+        assert!(code.contains("arg0: &mut impl sm_call::ObjectArg<dep_crate::dep::Obj>"));
     }
 }
