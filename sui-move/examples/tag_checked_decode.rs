@@ -2,12 +2,13 @@ use std::marker::PhantomData;
 
 use sui_move::MoveType;
 use sui_move::{balance::Balance, coin::Coin, decode_keyed, sui::SUI, types::ID, types::UID};
+use sui_sdk_types::Address;
 
 fn main() {
     let coin = Coin::<SUI> {
         id: UID {
             id: ID {
-                bytes: vec![7u8; 32],
+                bytes: Address::new([7u8; 32]),
             },
         },
         balance: Balance::<SUI> {

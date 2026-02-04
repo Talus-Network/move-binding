@@ -153,8 +153,14 @@ impl<T: MoveStruct + HasKey> SharedMoveObject<T> {
 
 /// Typed handle for a "receiving" object argument.
 ///
-/// Receiving objects are passed as an [`ObjectReference`], but their semantics differ from normal
-/// immutable-or-owned object inputs.
+/// This corresponds to Sui's `Input::Receiving(ObjectReference)`.
+///
+/// Receiving is a **transaction input mode**, not an on-chain owner kind. It is used for the Move
+/// framework concept `sui::transfer::Receiving<T>`: an ephemeral per-transaction “receiving
+/// ticket” that can be consumed by `sui::transfer::receive`/`public_receive`.
+///
+/// This wrapper does not validate whether the referenced object can be received in the current
+/// transaction; invalid uses are rejected by Sui.
 ///
 /// # Example
 /// ```
@@ -208,12 +214,55 @@ pub enum CallArgError {
     /// BCS encoding failed.
     #[error(transparent)]
     Bcs(#[from] bcs::Error),
+
+    /// The referenced object is tombstoned (e.g. deleted or wrapped).
+    ///
+    /// Higher layers may track object liveness across commits and refuse to use stale handles as
+    /// inputs.
+    #[error("object {object_id} is tombstoned ({reason})")]
+    Tombstoned {
+        /// Object id that was attempted to be used as an argument.
+        object_id: Address,
+        /// Human-readable reason (deleted, wrapped, not-exist, ...).
+        reason: &'static str,
+    },
+
+    /// The referenced object kind does not match what the conversion requires.
+    ///
+    /// This is primarily used by higher layers that classify on-chain ownership and choose the
+    /// correct Sui input mode (owned/immutable vs shared).
+    #[error("object {object_id} has kind {actual}, expected {expected}")]
+    ObjectKind {
+        /// Object id that was attempted to be used as an argument.
+        object_id: Address,
+        /// Expected kind label (input mode / ownership kind).
+        expected: &'static str,
+        /// Actual kind label (input mode / ownership kind).
+        actual: &'static str,
+    },
+
+    /// A mutable shared input was required, but the provided shared handle is immutable.
+    #[error("shared object {object_id} has mutability {actual:?}, expected writable")]
+    SharedMutability {
+        /// Shared object id.
+        object_id: Address,
+        /// Actual mutability of the provided shared handle.
+        actual: Mutability,
+    },
 }
 
 /// Convert a value into a `CallArg`.
 ///
 /// This is used to build `CallSpec` values ergonomically while keeping ownership simple: the
 /// conversion only needs an `&self`.
+///
+/// `ToCallArg` is intentionally generic:
+/// - for `T: MoveType`, it returns a `CallArg::Pure` by BCS-encoding the value
+/// - for object handle types, it returns the appropriate object input
+///
+/// Higher layers may implement `ToCallArg` for runtime-owned handles. Those implementations can
+/// fail even without BCS encoding errors (for example, if the handle is stale/tombstoned or if its
+/// on-chain kind makes it invalid for the requested input mode).
 ///
 /// # Example
 /// ```
@@ -228,6 +277,16 @@ pub enum CallArgError {
 pub trait ToCallArg {
     /// Convert this value into a `CallArg`.
     fn to_call_arg(&self) -> Result<CallArg, CallArgError>;
+}
+
+/// Convert a value into a `CallArg`, forcing a "mutable object input" when applicable.
+///
+/// This is primarily used by code generation and higher layers that mirror Move `&mut` parameters:
+/// shared objects need their transaction input marked mutable, while owned objects use the same
+/// `ObjectReference` shape regardless.
+pub trait ToCallArgMut: ToCallArg {
+    /// Convert this value into a `CallArg` suitable for a Move `&mut` parameter.
+    fn to_call_arg_mutable(&self) -> Result<CallArg, CallArgError>;
 }
 
 impl<T: MoveType> ToCallArg for T {
@@ -253,6 +312,40 @@ impl<T: MoveStruct + HasKey> ToCallArg for ReceivingMoveObject<T> {
         Ok(CallArg::Receiving(self.reference().clone()))
     }
 }
+
+impl<T: MoveStruct + HasKey> ToCallArgMut for MoveObject<T> {
+    fn to_call_arg_mutable(&self) -> Result<CallArg, CallArgError> {
+        self.to_call_arg()
+    }
+}
+
+impl<T: MoveStruct + HasKey> ToCallArgMut for SharedMoveObject<T> {
+    fn to_call_arg_mutable(&self) -> Result<CallArg, CallArgError> {
+        let actual = self.mutability();
+        if !actual.is_mutable() {
+            return Err(CallArgError::SharedMutability {
+                object_id: self.object_id(),
+                actual,
+            });
+        }
+        Ok(CallArg::Shared(self.input.clone()))
+    }
+}
+
+impl<T: MoveStruct + HasKey> ToCallArgMut for ReceivingMoveObject<T> {
+    fn to_call_arg_mutable(&self) -> Result<CallArg, CallArgError> {
+        self.to_call_arg()
+    }
+}
+
+/// Typed object arguments.
+///
+/// Generated interface code uses this trait to accept both owned/immutable and shared object
+/// handles while still carrying the expected Move type `T`.
+pub trait ObjectArg<T: MoveStruct + HasKey>: ToCallArgMut {}
+
+impl<T: MoveStruct + HasKey> ObjectArg<T> for MoveObject<T> {}
+impl<T: MoveStruct + HasKey> ObjectArg<T> for SharedMoveObject<T> {}
 
 /// Errors that can occur when constructing a `CallSpec`.
 #[derive(thiserror::Error, Debug)]
@@ -337,8 +430,20 @@ impl CallSpec {
     }
 
     /// Append an argument by converting it into a `CallArg`.
+    ///
+    /// This can fail for BCS encoding errors (pure values) and, for higher-layer object handles,
+    /// for handle state errors (tombstoned/stale handles, kind mismatches, etc.).
     pub fn push_arg<A: ToCallArg>(&mut self, arg: &A) -> Result<(), CallArgError> {
         self.arguments.push(arg.to_call_arg()?);
+        Ok(())
+    }
+
+    /// Append an argument as if it were used for a Move `&mut` parameter.
+    ///
+    /// This differs from [`CallSpec::push_arg`] only for shared object handles: shared inputs must
+    /// be marked mutable in the transaction input.
+    pub fn push_arg_mut<A: ToCallArgMut>(&mut self, arg: &A) -> Result<(), CallArgError> {
+        self.arguments.push(arg.to_call_arg_mutable()?);
         Ok(())
     }
 
@@ -354,8 +459,8 @@ impl CallSpec {
 /// Convenience re-exports for downstream code.
 pub mod prelude {
     pub use crate::{
-        CallArg, CallArgError, CallSpec, CallSpecError, MoveObject, ReceivingMoveObject,
-        SharedMoveObject, ToCallArg,
+        CallArg, CallArgError, CallSpec, CallSpecError, MoveObject, ObjectArg, ReceivingMoveObject,
+        SharedMoveObject, ToCallArg, ToCallArgMut,
     };
     pub use sui_move::prelude::*;
     pub use sui_sdk_types::Mutability;

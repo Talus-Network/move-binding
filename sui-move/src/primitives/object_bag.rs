@@ -15,6 +15,7 @@ use crate::{parse_address, parse_identifier, MoveStruct, MoveType};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectBag {
     pub id: crate::types::UID,
+    pub size: u64,
 }
 
 impl MoveType for ObjectBag {

@@ -57,6 +57,7 @@ pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// # Example
 /// ```rust,no_run
 /// use std::marker::PhantomData;
+/// use sui_move::prelude::Address;
 /// use sui_move::types::{ID, UID};
 /// use sui_move_derive::move_struct;
 ///
@@ -76,7 +77,7 @@ pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
 ///     let _value = Vault::<u64> {
 ///         id: UID {
 ///             id: ID {
-///                 bytes: vec![0u8; 32],
+///                 bytes: Address::new([0u8; 32]),
 ///             },
 ///         },
 ///         balance: vec![1, 2, 3],
