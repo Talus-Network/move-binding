@@ -10,8 +10,16 @@ The format is based on [Keep a Changelog], and this project adheres to
 ### Added
 
 - Add `sui-move`: core Move-shaped type layer (traits, abilities, decoding).
-- Add Move framework primitives under `sui_move::primitives` (e.g. `coin`, `balance`, `vec_map`).
+- Add Move framework primitives under `sui_move::primitives` (e.g. `coin`, `balance`, `vec_map`) with BCS-accurate tags/layouts.
 - Add `sui-move-derive` and the `sui-move` `derive` feature for defining Move-shaped structs via macros.
+- Add `sui-move-call`: typed Move call descriptions (`CallSpec`) plus typed wrappers for Sui `Input` kinds (pure, immutable/owned, shared, receiving).
+- Add `sui-move-ptb`: minimal PTB builder that consumes `CallSpec` and produces `ProgrammableTransaction`.
+- Add `sui-move-runtime`: cursor-driven runtime for the Read → Tx → Commit mental model:
+  - runtime-owned handles (`Object<T>`) that auto-update from transaction effects,
+  - explicit input-mode views (`shared_immutable`, `shared_mutable`, `receiving`),
+  - finality-aware `Receipt` plus recovery hooks (`Runtime::sync_transaction`, `Read::refresh*`),
+  - ergonomic transaction macro (`sui_move_runtime::tx!`).
+- Add `sui-move-codegen`: fetch + normalize package metadata (`NormalizedPackage`) and render typed Rust bindings (Move-shaped types + `CallSpec` builders).
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html

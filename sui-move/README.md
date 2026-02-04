@@ -6,6 +6,14 @@ This crate solves one problem: **represent Move types precisely in Rust** (inclu
 `TypeTag`/`StructTag` and ability surface), so you can build strongly-typed Sui clients and
 helpers that can **verify type tags and decode BCS safely**.
 
+## Where it fits
+
+`sui-move` is the bottom layer of this repository’s stack (`MODEL.md`). Higher layers use it to:
+
+- name types precisely when building Move calls (`TypeTag`/`StructTag`),
+- express Move ability constraints as normal Rust bounds,
+- verify on-chain type tags and decode BCS in a controlled way.
+
 ## Quickstart
 
 The core traits are `MoveType` and `MoveStruct`.
