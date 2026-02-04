@@ -87,6 +87,34 @@ impl<K: MoveType + HasCopy + HasDrop + HasStore, V: MoveType + HasStore> MoveStr
 impl<K: MoveType + HasCopy + HasDrop + HasStore, V: MoveType + HasStore> HasKey for Table<K, V> {}
 impl<K: MoveType + HasCopy + HasDrop + HasStore, V: MoveType + HasStore> HasStore for Table<K, V> {}
 
+/// Move `0x2::table_vec::TableVec<V>`.
+///
+/// The Sui framework table vec stores data as a `Table<u64, T>`.
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct TableVec<T: MoveType + HasStore> {
+    pub contents: Table<u64, T>,
+}
+
+impl<T: MoveType + HasStore> MoveType for TableVec<T> {
+    fn type_tag_static() -> sui_sdk_types::TypeTag {
+        sui_sdk_types::TypeTag::Struct(Box::new(Self::struct_tag_static()))
+    }
+}
+
+impl<T: MoveType + HasStore> MoveStruct for TableVec<T> {
+    fn struct_tag_static() -> sui_sdk_types::StructTag {
+        sui_sdk_types::StructTag::new(
+            parse_address("0x2").expect("address literal"),
+            parse_identifier("table_vec").expect("module"),
+            parse_identifier("TableVec").expect("name"),
+            vec![T::type_tag_static()],
+        )
+    }
+}
+
+impl<T: MoveType + HasStore> HasStore for TableVec<T> {}
+
 /// Move `0x2::dynamic_field::Field<K, V>`.
 ///
 /// Dynamic fields are stored under an owning object and addressed by a “name” value.

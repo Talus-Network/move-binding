@@ -47,6 +47,9 @@ pub(crate) fn map_builtin(type_name: &TypeName, use_aliases: bool) -> Option<Bui
         }
         ("0x1", "option", "Option") => (sm(use_aliases, quote! { containers::MoveOption }), false),
         ("0x2", "table", "Table") => (sm(use_aliases, quote! { containers::Table }), false),
+        ("0x2", "table_vec", "TableVec") => {
+            (sm(use_aliases, quote! { containers::TableVec }), false)
+        }
         ("0x2", "dynamic_field", "Field") => {
             (sm(use_aliases, quote! { containers::DynamicField }), false)
         }
