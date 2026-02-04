@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog], and this project adheres to
   - explicit input-mode views (`shared_immutable`, `shared_mutable`, `receiving`),
   - finality-aware `Receipt` plus recovery hooks (`Runtime::sync_transaction`, `Read::refresh*`),
   - ergonomic transaction macro (`sui_move_runtime::tx!`).
+- Add `sui-move-codegen`: fetch + normalize package metadata (`NormalizedPackage`) and render typed Rust bindings (Move-shaped types + `CallSpec` builders).
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html

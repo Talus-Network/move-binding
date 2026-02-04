@@ -21,9 +21,13 @@ frontier by applying transaction effects. See `MODEL.md`.
 - `sui-move-runtime`: a cursor-driven runtime for Read/Tx/Commit of PTBs and auto-updating typed
   handles from transaction effects.
   See `sui-move-runtime/README.md`.
+- `sui-move-codegen`: generate typed Rust bindings (types + `CallSpec` builders) from on-chain Move
+  package metadata.
+  See `sui-move-codegen/README.md`.
 
 ## Where to start
 
 - Application code: start at `sui-move-runtime/README.md`.
 - Interface crates (module/function wrappers): start at `sui-move-call/README.md`.
 - Pure type modeling/decoding: start at `sui-move/README.md`.
+- Generating bindings from on-chain metadata: start at `sui-move-codegen/README.md`.

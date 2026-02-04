@@ -14,7 +14,11 @@ pub use crate::tx::{
 
 use std::time::Duration;
 
-use sui_crypto::SuiSigner;
+/// Re-export of `sui_crypto::SuiSigner` used by [`Runtime`] and [`Tx`].
+///
+/// This lets generated bindings name the signer bound as `sui_move_runtime::SuiSigner` without
+/// requiring consumers to depend on `sui-crypto` directly.
+pub use sui_crypto::SuiSigner;
 use sui_sdk_types::{Address, Mutability, ProgrammableTransaction, TransactionEffects, TypeTag};
 
 /// Errors produced by `sui-move-runtime`.

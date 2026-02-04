@@ -6,6 +6,7 @@ members = [
     "sui-move-call",
     "sui-move-ptb",
     "sui-move-runtime",
+    "sui-move-codegen",
 ]
 
 [workspace.dependencies]
@@ -19,3 +20,4 @@ sui-crypto = { git = "https://github.com/mystenlabs/sui-rust-sdk" }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
+prettyplease = "0.2"

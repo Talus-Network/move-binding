@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::sync::{Arc, Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
-use sui_move_call::{CallArg, ToCallArg};
+use sui_move_call::{CallArg, ObjectArg, ToCallArg, ToCallArgMut};
 use sui_sdk_types::{Address, Mutability, ObjectReference, Owner, SharedInput};
 
 use crate::effects;
@@ -273,6 +273,41 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for Object<T> {
     }
 }
 
+impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for Object<T> {
+    fn to_call_arg_mutable(&self) -> Result<CallArg, sui_move_call::CallArgError> {
+        self.ensure_not_tombstoned()?;
+
+        let owner = self.cell.owner.read().expect("poisoned object lock");
+        match tx::classify_owner(&owner) {
+            tx::OwnerKind::Immutable | tx::OwnerKind::AddressOwned => {
+                Ok(CallArg::ImmutableOrOwned(self.reference()))
+            }
+            kind if kind.is_shared_like() => {
+                let Some(initial_shared_version) = kind.shared_start_version() else {
+                    return Err(sui_move_call::CallArgError::ObjectKind {
+                        object_id: self.object_id(),
+                        expected: "shared",
+                        actual: kind.label(),
+                    });
+                };
+
+                Ok(CallArg::Shared(SharedInput::new(
+                    self.object_id(),
+                    initial_shared_version,
+                    Mutability::Mutable,
+                )))
+            }
+            other => Err(sui_move_call::CallArgError::ObjectKind {
+                object_id: self.object_id(),
+                expected: "immutable-or-owned or shared",
+                actual: other.label(),
+            }),
+        }
+    }
+}
+
+impl<T: sui_move::MoveStruct + sui_move::HasKey> ObjectArg<T> for Object<T> {}
+
 /// Runtime-owned handle for a receiving object input.
 ///
 /// This is the runtime-owned counterpart of Sui's `Input::Receiving`.
@@ -332,6 +367,12 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for ReceivingObject<T
                 actual: other.label(),
             }),
         }
+    }
+}
+
+impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for ReceivingObject<T> {
+    fn to_call_arg_mutable(&self) -> Result<CallArg, sui_move_call::CallArgError> {
+        self.to_call_arg()
     }
 }
 
@@ -427,6 +468,22 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for SharedObject<T> {
         Ok(CallArg::Shared(self.input.clone()))
     }
 }
+
+impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for SharedObject<T> {
+    fn to_call_arg_mutable(&self) -> Result<CallArg, sui_move_call::CallArgError> {
+        let actual = self.mutability();
+        if !actual.is_mutable() {
+            return Err(sui_move_call::CallArgError::SharedMutability {
+                object_id: self.object_id(),
+                actual,
+            });
+        }
+
+        Ok(CallArg::Shared(self.input.clone()))
+    }
+}
+
+impl<T: sui_move::MoveStruct + sui_move::HasKey> ObjectArg<T> for SharedObject<T> {}
 
 #[derive(Default, Debug)]
 pub(crate) struct Cursor {
@@ -566,6 +623,7 @@ impl Cursor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sui_move_call::ToCallArgMut;
     use sui_sdk_types::{
         ChangedObject, Digest, ExecutionStatus, GasCostSummary, IdOperation, Mutability, ObjectIn,
         ObjectOut, Owner, TransactionEffects, TransactionEffectsV2,
@@ -699,6 +757,24 @@ mod tests {
         assert_eq!(shared.object_id(), id);
         assert_eq!(shared.version(), 7);
         assert_eq!(shared.mutability(), Mutability::Immutable);
+    }
+
+    #[test]
+    fn object_to_call_arg_mut_marks_shared_mutable() {
+        let id = Address::from_hex("0x2").unwrap();
+        let reference = ObjectReference::new(id, 1, Digest::default());
+
+        let cursor = Cursor::default();
+        let obj: Object<Demo> = cursor.intern_object(reference, Owner::Shared(7));
+
+        let arg = obj.to_call_arg_mutable().unwrap();
+        let CallArg::Shared(shared) = arg else {
+            panic!("expected shared call arg")
+        };
+
+        assert_eq!(shared.object_id(), id);
+        assert_eq!(shared.version(), 7);
+        assert_eq!(shared.mutability(), Mutability::Mutable);
     }
 
     #[test]
