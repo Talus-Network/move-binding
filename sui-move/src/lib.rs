@@ -13,9 +13,10 @@ pub mod prelude {
     //!
     //! Intended for end-user code and examples.
     pub use crate::{
-        containers::DynamicField, containers::DynamicObjectField, containers::MoveOption,
-        containers::Table, types::ID, types::UID, Copyable, Droppable, HasCopy, HasDrop, HasKey,
-        HasStore, MoveInstance, MoveStruct, MoveType, Storable,
+        containers::DynamicField, containers::DynamicObjectField,
+        containers::DynamicObjectFieldWrapper, containers::MoveOption, containers::Table,
+        types::ID, types::UID, Copyable, Droppable, HasCopy, HasDrop, HasKey, HasStore,
+        MoveInstance, MoveStruct, MoveType, Storable,
     };
     #[cfg(feature = "derive")]
     pub use crate::{move_module, move_struct};

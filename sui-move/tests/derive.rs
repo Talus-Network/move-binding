@@ -65,13 +65,13 @@ fn nested_structs_are_supported() {
     let wrapper = wrapper::VaultWrapper {
         id: sui_move::types::UID {
             id: sui_move::types::ID {
-                bytes: vec![0u8; 32],
+                bytes: Address::new([0u8; 32]),
             },
         },
         inner: vault::Vault::<u64> {
             id: sui_move::types::UID {
                 id: sui_move::types::ID {
-                    bytes: vec![42u8; 32],
+                    bytes: Address::new([42u8; 32]),
                 },
             },
             balance: vec![9, 8],
@@ -81,7 +81,7 @@ fn nested_structs_are_supported() {
 
     let bytes = wrapper.to_bcs().unwrap();
     let decoded = wrapper::VaultWrapper::from_bcs(&bytes).unwrap();
-    assert_eq!(decoded.inner.id.id.bytes[0], 42);
+    assert_eq!(decoded.inner.id.id.bytes.as_bytes()[0], 42);
     assert_eq!(decoded.inner.balance, vec![9, 8]);
 
     match wrapper::VaultWrapper::type_tag_static() {
@@ -98,7 +98,7 @@ fn tag_verification_and_bcs_roundtrip() {
     let value = vault::Vault::<u64> {
         id: sui_move::types::UID {
             id: sui_move::types::ID {
-                bytes: vec![7u8; 32],
+                bytes: Address::new([7u8; 32]),
             },
         },
         balance: vec![1, 2, 3],
@@ -111,7 +111,7 @@ fn tag_verification_and_bcs_roundtrip() {
         &bytes,
     )
     .unwrap();
-    assert_eq!(inst.value.id.id.bytes[0], 7);
+    assert_eq!(inst.value.id.id.bytes.as_bytes()[0], 7);
     assert_eq!(inst.value.balance, vec![1, 2, 3]);
 
     let err = MoveInstance::<vault::Vault<u64>>::from_raw_type(sui_sdk_types::TypeTag::U8, &bytes)
@@ -132,7 +132,7 @@ fn type_abilities_are_respected() {
     let nested = vault::Vault {
         id: sui_move::types::UID {
             id: sui_move::types::ID {
-                bytes: vec![9u8; 32],
+                bytes: Address::new([9u8; 32]),
             },
         },
         balance: vec![bounded::Boxed::<u64> { value: 7 }],
