@@ -16,8 +16,7 @@ use sui_move_codegen::render::RenderOptions;
 use sui_move_codegen::workspace::{generate_bindings_workspace, WorkspaceOptions};
 use sui_move_codegen::{Address, Client};
 
-const DEFAULT_PACKAGE: &str =
-    "0x4cc38b7c23bf14d7555503ab38a9748f9544c2c29c6519df412b4f6fb6971640";
+const DEFAULT_PACKAGE: &str = "0x4cc38b7c23bf14d7555503ab38a9748f9544c2c29c6519df412b4f6fb6971640";
 const DEFAULT_GRPC: &str = "http://127.0.0.1:9000";
 
 fn usage() -> ! {
@@ -111,4 +110,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-

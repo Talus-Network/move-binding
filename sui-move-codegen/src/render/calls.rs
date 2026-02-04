@@ -119,8 +119,7 @@ fn render_params_and_pushes(
         let is_object = is_object_type(inner, f, pkg, opts, resolver);
 
         if is_object {
-            let obj_ty =
-                types::render_type_ref_in_module(inner, &module.name, pkg, opts, resolver);
+            let obj_ty = types::render_type_ref_in_module(inner, &module.name, pkg, opts, resolver);
             let param_ty = if ref_mutable {
                 quote! { &mut impl #sm_call::ObjectArg<#obj_ty> }
             } else {

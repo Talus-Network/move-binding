@@ -23,8 +23,6 @@ mod util;
 ///         pub value: u64,
 ///     }
 /// }
-///
-/// fn main() {}
 /// ```
 #[proc_macro_attribute]
 pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
@@ -73,17 +71,15 @@ pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
 ///     pub balance: Vec<T>,
 /// }
 ///
-/// fn main() {
-///     let _value = Vault::<u64> {
-///         id: UID {
-///             id: ID {
-///                 bytes: Address::new([0u8; 32]),
-///             },
+/// let _value = Vault::<u64> {
+///     id: UID {
+///         id: ID {
+///             bytes: Address::new([0u8; 32]),
 ///         },
-///         balance: vec![1, 2, 3],
-///         phantom_t: PhantomData,
-///     };
-/// }
+///     },
+///     balance: vec![1, 2, 3],
+///     phantom_t: PhantomData,
+/// };
 /// ```
 #[proc_macro_attribute]
 pub fn move_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -127,11 +123,8 @@ mod tests {
 
     #[test]
     fn expands_struct_with_where_bounds_on_definition() {
-        let args: MoveStructArgs = syn::parse_quote!(
-            address = "0x1",
-            module = "m",
-            type_abilities = "T0: store"
-        );
+        let args: MoveStructArgs =
+            syn::parse_quote!(address = "0x1", module = "m", type_abilities = "T0: store");
 
         let input: syn::DeriveInput = syn::parse_quote!(
             pub struct S<T0> {
@@ -179,11 +172,9 @@ mod tests {
             name: &str,
         ) -> bool {
             bounds.iter().any(|b| match b {
-                syn::TypeParamBound::Trait(tb) => tb
-                    .path
-                    .segments
-                    .last()
-                    .is_some_and(|seg| seg.ident == name),
+                syn::TypeParamBound::Trait(tb) => {
+                    tb.path.segments.last().is_some_and(|seg| seg.ident == name)
+                }
                 _ => false,
             })
         }

@@ -106,7 +106,7 @@ pub async fn generate_bindings_workspace(
             let base = pkg
                 .original_id
                 .as_deref()
-                .unwrap_or_else(|| pkg.storage_id.as_str());
+                .unwrap_or(pkg.storage_id.as_str());
             crate_by_storage.insert(storage_id.clone(), default_crate_name(base));
         }
     }
@@ -382,10 +382,11 @@ fn external_for_address<'a>(
 
 fn read_cargo_package_name(crate_dir: &Path) -> Result<String, WorkspaceError> {
     let cargo_toml = crate_dir.join("Cargo.toml");
-    let contents = fs::read_to_string(&cargo_toml).map_err(|e| WorkspaceError::InvalidExternalCrate {
-        path: cargo_toml.display().to_string(),
-        message: e.to_string(),
-    })?;
+    let contents =
+        fs::read_to_string(&cargo_toml).map_err(|e| WorkspaceError::InvalidExternalCrate {
+            path: cargo_toml.display().to_string(),
+            message: e.to_string(),
+        })?;
 
     let mut in_package = false;
     for line in contents.lines() {
@@ -417,6 +418,7 @@ fn read_cargo_package_name(crate_dir: &Path) -> Result<String, WorkspaceError> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_generated_crate(
     crate_dir: &Path,
     pkg: &NormalizedPackage,
@@ -444,7 +446,10 @@ fn write_generated_crate(
         for dep in deps {
             // Skip deps that are actually local aliases.
             if dep == normalize_address(&pkg.storage_id)
-                || pkg.original_id.as_deref().is_some_and(|o| dep == normalize_address(o))
+                || pkg
+                    .original_id
+                    .as_deref()
+                    .is_some_and(|o| dep == normalize_address(o))
             {
                 continue;
             }
@@ -458,12 +463,12 @@ fn write_generated_crate(
                 .cloned()
                 .unwrap_or_else(|| default_crate_name(&dep));
 
-            let dep_path = if let Some(ext) = external_for_address(externals, alias_to_storage, &dep)
-            {
-                ext.crate_dir.display().to_string()
-            } else {
-                format!("../{dep_crate}")
-            };
+            let dep_path =
+                if let Some(ext) = external_for_address(externals, alias_to_storage, &dep) {
+                    ext.crate_dir.display().to_string()
+                } else {
+                    format!("../{dep_crate}")
+                };
             dep_specs.insert(dep_crate, dep_path);
         }
 

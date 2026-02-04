@@ -56,4 +56,3 @@ impl<T: MoveType + crate::HasDrop> MoveStruct for PriorityQueue<T> {
 
 impl<T: MoveType + crate::HasDrop> crate::HasDrop for PriorityQueue<T> {}
 impl<T: MoveType + crate::HasDrop> crate::HasStore for PriorityQueue<T> {}
-

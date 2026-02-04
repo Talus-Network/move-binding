@@ -32,4 +32,3 @@ impl MoveStruct for String {
 impl crate::HasCopy for String {}
 impl crate::HasDrop for String {}
 impl crate::HasStore for String {}
-

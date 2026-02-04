@@ -35,7 +35,8 @@ impl ExternalResolver {
         self.crate_by_address
             .insert(pkg.storage_id.clone(), crate_name.clone());
         if let Some(orig) = &pkg.original_id {
-            self.crate_by_address.insert(orig.clone(), crate_name.clone());
+            self.crate_by_address
+                .insert(orig.clone(), crate_name.clone());
         }
 
         for module in pkg.modules.values() {
