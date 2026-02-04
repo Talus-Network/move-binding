@@ -1,0 +1,17 @@
+[package]
+name = "sui-move-call"
+version = "0.1.0"
+edition = "2021"
+description = "Typed call arguments and call specifications for Move calls on Sui."
+readme = "README.md"
+
+[dependencies]
+sui-move = { path = "../sui-move" }
+serde = { workspace = true, features = ["derive"] }
+bcs = { workspace = true }
+thiserror = { workspace = true }
+sui-sdk-types = { workspace = true }
+
+[dev-dependencies]
+sui-move = { path = "../sui-move", features = ["derive"] }
+

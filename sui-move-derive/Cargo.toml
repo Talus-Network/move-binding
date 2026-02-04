@@ -1,0 +1,18 @@
+[package]
+name = "sui-move-derive"
+version = "0.1.0"
+edition = "2021"
+description = "Procedural macros for sui-move typed structs."
+readme = "README.md"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+sui-move = { path = "../sui-move" }
+
