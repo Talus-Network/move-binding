@@ -224,9 +224,19 @@ pub(crate) fn expand_move_struct(
         parse_quote!(::sui_move::__private::serde::Deserialize),
     ]);
 
+    // Apply computed bounds to the struct definition itself so that derive macros (e.g. serde)
+    // see the same constraints as the generated `MoveType`/`MoveStruct` impls.
+    let mut expanded_generics = generics.clone();
+    if !where_bounds.is_empty() {
+        expanded_generics
+            .make_where_clause()
+            .predicates
+            .extend(where_bounds.iter().cloned());
+    }
+
     let mut output_struct = input;
     output_struct.ident = struct_ident.clone();
-    output_struct.generics = generics.clone();
+    output_struct.generics = expanded_generics.clone();
     output_struct.data = Data::Struct(syn::DataStruct {
         struct_token: Default::default(),
         fields: Fields::Named(syn::FieldsNamed {
@@ -274,6 +284,31 @@ pub(crate) fn expand_move_struct(
         found
     });
 
+    let serde_has_bound_override = serde_attrs.iter().any(|attr| {
+        let syn::Meta::List(list) = &attr.meta else {
+            return false;
+        };
+
+        let mut found = false;
+        let parser = syn::meta::parser(|meta| {
+            if meta.path.is_ident("bound") {
+                found = true;
+            }
+
+            if meta.input.peek(syn::Token![=]) {
+                let _expr: syn::Expr = meta.value()?.parse()?;
+            } else if meta.input.peek(syn::token::Paren) {
+                let content;
+                syn::parenthesized!(content in meta.input);
+                let _tokens: proc_macro2::TokenStream = content.parse()?;
+            }
+
+            Ok(())
+        });
+        let _ = parser.parse2(list.tokens.clone());
+        found
+    });
+
     output_struct.attrs = other_attrs;
     output_struct
         .attrs
@@ -283,24 +318,12 @@ pub(crate) fn expand_move_struct(
             .attrs
             .push(parse_quote!(#[serde(crate = "sui_move::__private::serde")]));
     }
+    if !type_param_idents.is_empty() && !serde_has_bound_override {
+        output_struct.attrs.push(parse_quote!(#[serde(bound = "")]));
+    }
     output_struct.attrs.extend(serde_attrs);
 
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-    let where_clause = {
-        let mut where_clause = where_clause.cloned();
-        if !where_bounds.is_empty() {
-            if let Some(ref mut w) = where_clause {
-                w.predicates.extend(where_bounds.iter().cloned());
-            } else {
-                let preds = where_bounds.iter().cloned();
-                where_clause = Some(syn::WhereClause {
-                    where_token: Default::default(),
-                    predicates: preds.collect(),
-                });
-            }
-        }
-        where_clause
-    };
+    let (impl_generics, ty_generics, where_clause) = expanded_generics.split_for_impl();
 
     let ability_impls = {
         let mut impls = Vec::new();
