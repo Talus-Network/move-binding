@@ -134,7 +134,6 @@ pub(crate) fn render_module_file(
 
     quote! {
         #aliases
-        use super::PACKAGE;
         #(#items)*
     }
 }
@@ -167,7 +166,6 @@ pub(crate) fn render_module(
         quote! {
             pub mod #module_ident {
                 #aliases
-                use super::PACKAGE;
                 #(#items)*
             }
         }
@@ -181,6 +179,64 @@ fn package_const_tokens(pkg: &NormalizedPackage, opts: &RenderOptions) -> TokenS
     quote! {
         /// Package address (the on-chain package object id).
         pub const PACKAGE: #address_ty = #address_ty::from_static(#addr);
+
+        /// Internal address helpers for this bindings module.
+        ///
+        /// This is a small escape hatch for two common deployment patterns:
+        /// - upgrade: new package object id (`storage_id`), but types keep their defining ids →
+        ///   override only [`__sui_move_bindings::call_package`].
+        /// - republish: same code published as a brand-new package (new `original_id`) →
+        ///   override both calls and local type addresses via [`__sui_move_bindings::republish_to`].
+        #[doc(hidden)]
+        pub mod __sui_move_bindings {
+            use super::PACKAGE;
+
+            type Address = #address_ty;
+
+            static CALL_PACKAGE_OVERRIDE: ::std::sync::OnceLock<Address> =
+                ::std::sync::OnceLock::new();
+            static LOCAL_TYPE_ADDRESS_OVERRIDE: ::std::sync::OnceLock<Address> =
+                ::std::sync::OnceLock::new();
+
+            /// Package address used for generated call stubs.
+            ///
+            /// Defaults to [`PACKAGE`]. Can be overridden once via [`set_call_package`].
+            #[must_use]
+            pub fn call_package() -> Address {
+                CALL_PACKAGE_OVERRIDE.get().copied().unwrap_or(PACKAGE)
+            }
+
+            /// Override the package address used for generated call stubs.
+            ///
+            /// Use this for upgrades (same `original_id`, new `storage_id`).
+            pub fn set_call_package(addr: Address) -> Result<(), Address> {
+                CALL_PACKAGE_OVERRIDE.set(addr)
+            }
+
+            /// Override the address used for local type tags.
+            ///
+            /// Use this for republishing the same code as a new package id.
+            pub fn set_local_type_address_override(addr: Address) -> Result<(), Address> {
+                LOCAL_TYPE_ADDRESS_OVERRIDE.set(addr)
+            }
+
+            /// Convenience for the republish case: retarget both calls and local type tags.
+            pub fn republish_to(addr: Address) -> Result<(), Address> {
+                set_call_package(addr)?;
+                set_local_type_address_override(addr)?;
+                Ok(())
+            }
+
+            /// Resolve the defining address for a local type.
+            ///
+            /// When republishing the same code, you can override all local type addresses by
+            /// calling [`set_local_type_address_override`]. For upgrades, keep the default per-type
+            /// defining id.
+            #[must_use]
+            pub fn local_type_address(default: Address) -> Address {
+                LOCAL_TYPE_ADDRESS_OVERRIDE.get().copied().unwrap_or(default)
+            }
+        }
     }
 }
 

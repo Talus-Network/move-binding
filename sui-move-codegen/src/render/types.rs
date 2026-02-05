@@ -107,10 +107,16 @@ fn render_struct(
         quote! { sui_move::move_struct }
     };
 
+    let address_expr = if opts.flatten {
+        quote! { __sui_move_bindings::local_type_address(::sui_move::prelude::Address::from_static(#address_lit)) }
+    } else {
+        quote! { super::__sui_move_bindings::local_type_address(::sui_move::prelude::Address::from_static(#address_lit)) }
+    };
+
     quote! {
         #doc
         #[#macro_path(
-            address = #address_lit,
+            address = #address_expr,
             module = #module_lit,
             #name_arg
             #abilities_arg
@@ -146,7 +152,7 @@ fn render_enum(
     } else {
         quote! { sui_move }
     };
-    let struct_tag_builder = struct_tag_builder_tokens(dt, opts.use_aliases);
+    let struct_tag_builder = struct_tag_builder_tokens(dt, opts.use_aliases, opts.flatten);
     let where_clause = where_clause(&bounds);
 
     let derives = enum_derives(&dt.abilities, opts.use_aliases);
@@ -262,11 +268,17 @@ fn ability_impls_for_datatype(
     quote! { #(#out)* }
 }
 
-fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool) -> TokenStream {
+fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool, flatten: bool) -> TokenStream {
     let sm = if use_aliases {
         quote! { sm }
     } else {
         quote! { sui_move }
+    };
+
+    let helper = if flatten {
+        quote! { __sui_move_bindings::local_type_address }
+    } else {
+        quote! { super::__sui_move_bindings::local_type_address }
     };
 
     let address = syn::LitStr::new(&dt.type_name.address, proc_macro2::Span::call_site());
@@ -280,7 +292,7 @@ fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool) -> TokenStream {
 
     quote! {
         #sm::__private::sui_sdk_types::StructTag::new(
-            #sm::parse_address(#address).expect("invalid address literal"),
+            #helper(#sm::prelude::Address::from_static(#address)),
             #sm::parse_identifier(#module).expect("invalid module"),
             #sm::parse_identifier(#name).expect("invalid struct name"),
             vec![#(#ty_params_for_tag),*],

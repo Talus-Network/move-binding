@@ -51,6 +51,12 @@ fn render_function(
     let module_name = syn::LitStr::new(&module.name, proc_macro2::Span::call_site());
     let function_name = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
 
+    let package_expr = if opts.flatten {
+        quote! { __sui_move_bindings::call_package() }
+    } else {
+        quote! { super::__sui_move_bindings::call_package() }
+    };
+
     let push_type_args = type_params
         .iter()
         .map(|ty| quote! { spec.push_type_arg::<#ty>(); });
@@ -79,7 +85,7 @@ fn render_function(
         pub fn #fn_ident #fn_generics ( #(#params),* ) -> #sm_call::CallSpec
         #where_clause
         {
-            let mut spec = #sm_call::CallSpec::new(PACKAGE, #module_name, #function_name)
+            let mut spec = #sm_call::CallSpec::new(#package_expr, #module_name, #function_name)
                 .expect("valid Move identifiers");
             #(#push_type_args)*
             #(#pushes)*
