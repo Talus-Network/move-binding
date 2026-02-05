@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
-use sui_move_call::{CallArg, CallArgError, CallSpec, ToCallArg};
+use sui_move_call::{CallArg, CallArgError, CallArgument, CallReturn, CallSpec, ToCallArg};
 use sui_sdk_types::{
     Address, Argument, Command, MakeMoveVector, MergeCoins, MoveCall, Mutability,
     ProgrammableTransaction, Publish, SharedInput, SplitCoins, TransferObjects, TypeTag,
@@ -191,11 +191,14 @@ impl PtbBuilder {
     ///
     /// If the called function returns multiple values, you can access sub-results using
     /// `Argument::nested`.
-    pub fn call(&mut self, spec: CallSpec) -> Result<Argument, BuildError> {
+    pub fn call<R: CallReturn>(&mut self, spec: CallSpec<R>) -> Result<R, BuildError> {
         let arguments = spec
             .arguments
             .into_iter()
-            .map(|input| self.input(input))
+            .map(|arg| match arg {
+                CallArgument::Input(input) => self.input(input),
+                CallArgument::Argument(arg) => Ok(arg),
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         let cmd_idx = self.push_command(Command::MoveCall(MoveCall {
@@ -206,7 +209,7 @@ impl PtbBuilder {
             arguments,
         }))?;
 
-        Ok(Argument::Result(cmd_idx))
+        Ok(R::from_move_call_result(Argument::Result(cmd_idx)))
     }
 
     /// Add a `TransferObjects` command.

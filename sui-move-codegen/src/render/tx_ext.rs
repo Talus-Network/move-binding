@@ -85,13 +85,8 @@ fn render_method(
     let bounds = type_param_bounds(f, opts.use_aliases);
     let where_clause = where_clause(&bounds);
 
-    let sdk = if opts.use_aliases {
-        quote! { sm::__private::sui_sdk_types }
-    } else {
-        quote! { sui_move::__private::sui_sdk_types }
-    };
-
     let (params, args, skipped_tx_context) = render_params_and_args(f, pkg, opts, resolver);
+    let return_shape = render_return_shape(f, pkg, opts, resolver);
 
     let signature = move_signature_string(module, f);
     let doc = doc_lines(&[
@@ -112,14 +107,14 @@ fn render_method(
     let signature = quote! {
         #doc
         fn #tx_method_ident #fn_generics (&mut self, #(#params),*)
-            -> Result<#sdk::Argument, sui_move_runtime::Error>
+            -> Result<#return_shape, sui_move_runtime::Error>
             #where_clause
         ;
     };
 
     let implementation = quote! {
         fn #tx_method_ident #fn_generics (&mut self, #(#params),*)
-            -> Result<#sdk::Argument, sui_move_runtime::Error>
+            -> Result<#return_shape, sui_move_runtime::Error>
             #where_clause
         {
             self.call(#call_expr)
@@ -160,20 +155,47 @@ fn render_params_and_args(
         if is_object {
             let obj_ty = types::render_type_ref_in_root(inner, pkg, opts, resolver);
             let param_ty = if ref_mutable {
-                quote! { &mut impl #sm_call::ObjectArg<#obj_ty> }
+                quote! { impl #sm_call::IntoObjectArgMut<#obj_ty> }
             } else {
-                quote! { &impl #sm_call::ObjectArg<#obj_ty> }
+                quote! { impl #sm_call::IntoObjectArg<#obj_ty> }
             };
             params.push(quote! { #arg_ident: #param_ty });
         } else {
             let value_ty = types::render_type_ref_in_root(inner, pkg, opts, resolver);
-            params.push(quote! { #arg_ident: #value_ty });
+            params.push(quote! { #arg_ident: impl #sm_call::IntoMoveArg<#value_ty> });
         }
 
         args.push(quote! { #arg_ident });
     }
 
     (params, args, skipped_tx_context)
+}
+
+fn render_return_shape(
+    f: &Function,
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
+) -> TokenStream {
+    let sm_call = if opts.use_aliases {
+        quote! { sm_call }
+    } else {
+        quote! { sui_move_call }
+    };
+
+    let wrap = |ty: &TypeRef| {
+        let inner = types::render_type_ref_in_root(ty, pkg, opts, resolver);
+        quote! { #sm_call::PtbValue<#inner> }
+    };
+
+    match f.return_types.as_slice() {
+        [] => quote! { () },
+        [one] => wrap(one),
+        many => {
+            let parts = many.iter().map(wrap);
+            quote! { ( #(#parts),* ) }
+        }
+    }
 }
 
 fn is_tx_context(ty: &TypeRef) -> bool {

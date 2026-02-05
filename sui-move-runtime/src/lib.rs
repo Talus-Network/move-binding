@@ -557,10 +557,10 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
     }
 
     /// Add a Move call command from a typed [`sui_move_call::CallSpec`].
-    pub fn call(
+    pub fn call<R: sui_move_call::CallReturn>(
         &mut self,
-        spec: sui_move_call::CallSpec,
-    ) -> Result<sui_sdk_types::Argument, Error> {
+        spec: sui_move_call::CallSpec<R>,
+    ) -> Result<R, Error> {
         Ok(self.ptb.call(spec)?)
     }
 

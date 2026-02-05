@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn renders_mutable_object_params_with_push_arg_mut() {
         let code = render_package(&demo_pkg(), &RenderOptions::default());
-        assert!(code.contains("push_arg_mut(arg0)"));
+        assert!(code.contains("push_object_arg_mut(arg0)"));
     }
 
     #[test]
@@ -361,7 +361,7 @@ mod tests {
 
         assert!(code.contains("dep_crate::dep::Obj"));
         assert!(!code.contains("compile_error!"));
-        assert!(code.contains("arg0: &mut impl sm_call::ObjectArg<dep_crate::dep::Obj>"));
+        assert!(code.contains("arg0: impl sm_call::IntoObjectArgMut<dep_crate::dep::Obj>"));
     }
 
     #[test]
@@ -425,6 +425,6 @@ mod tests {
         let code = render_package_with_resolver(&root, &RenderOptions::default(), &resolver);
 
         // Key ability should still be detected, so the param becomes an object arg.
-        assert!(code.contains("arg0: &mut impl sm_call::ObjectArg<dep_crate::dep::Obj>"));
+        assert!(code.contains("arg0: impl sm_call::IntoObjectArgMut<dep_crate::dep::Obj>"));
     }
 }

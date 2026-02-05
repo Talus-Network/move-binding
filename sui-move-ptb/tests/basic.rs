@@ -31,7 +31,7 @@ fn build_move_call_from_callspec() {
     let package = Address::from_str("0x1").unwrap();
     let obj = MoveObject::<Thing>::new(mk_obj("0x2", 1));
 
-    let mut spec = CallSpec::new(package, "demo", "run").unwrap();
+    let mut spec: CallSpec<Argument> = CallSpec::new_typed(package, "demo", "run").unwrap();
     spec.push_type_arg::<u64>();
     spec.push_arg(&obj).unwrap();
     spec.push_arg(&7u64).unwrap();

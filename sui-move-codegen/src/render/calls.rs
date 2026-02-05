@@ -57,6 +57,8 @@ fn render_function(
         quote! { super::__sui_move_bindings::call_package() }
     };
 
+    let return_shape = render_return_shape(module, f, pkg, opts, resolver);
+
     let push_type_args = type_params
         .iter()
         .map(|ty| quote! { spec.push_type_arg::<#ty>(); });
@@ -82,14 +84,43 @@ fn render_function(
     quote! {
         #doc
         #[must_use]
-        pub fn #fn_ident #fn_generics ( #(#params),* ) -> #sm_call::CallSpec
+        pub fn #fn_ident #fn_generics ( #(#params),* ) -> #sm_call::CallSpec<#return_shape>
         #where_clause
         {
-            let mut spec = #sm_call::CallSpec::new(#package_expr, #module_name, #function_name)
-                .expect("valid Move identifiers");
+            let mut spec: #sm_call::CallSpec<#return_shape> =
+                #sm_call::CallSpec::new_typed(#package_expr, #module_name, #function_name)
+                    .expect("valid Move identifiers");
             #(#push_type_args)*
             #(#pushes)*
             spec
+        }
+    }
+}
+
+fn render_return_shape(
+    module: &NormalizedModule,
+    f: &Function,
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+    resolver: Option<&ExternalResolver>,
+) -> TokenStream {
+    let sm_call = if opts.use_aliases {
+        quote! { sm_call }
+    } else {
+        quote! { sui_move_call }
+    };
+
+    let wrap = |ty: &TypeRef| {
+        let inner = types::render_type_ref_in_module(ty, &module.name, pkg, opts, resolver);
+        quote! { #sm_call::PtbValue<#inner> }
+    };
+
+    match f.return_types.as_slice() {
+        [] => quote! { () },
+        [one] => wrap(one),
+        many => {
+            let parts = many.iter().map(wrap);
+            quote! { ( #(#parts),* ) }
         }
     }
 }
@@ -127,21 +158,21 @@ fn render_params_and_pushes(
         if is_object {
             let obj_ty = types::render_type_ref_in_module(inner, &module.name, pkg, opts, resolver);
             let param_ty = if ref_mutable {
-                quote! { &mut impl #sm_call::ObjectArg<#obj_ty> }
+                quote! { impl #sm_call::IntoObjectArgMut<#obj_ty> }
             } else {
-                quote! { &impl #sm_call::ObjectArg<#obj_ty> }
+                quote! { impl #sm_call::IntoObjectArg<#obj_ty> }
             };
             params.push(quote! { #arg_ident: #param_ty });
             if ref_mutable {
-                pushes.push(quote! { spec.push_arg_mut(#arg_ident).expect("encode arg"); });
+                pushes.push(quote! { spec.push_object_arg_mut(#arg_ident).expect("encode arg"); });
             } else {
-                pushes.push(quote! { spec.push_arg(#arg_ident).expect("encode arg"); });
+                pushes.push(quote! { spec.push_object_arg(#arg_ident).expect("encode arg"); });
             }
         } else {
             let value_ty =
                 types::render_type_ref_in_module(inner, &module.name, pkg, opts, resolver);
-            params.push(quote! { #arg_ident: #value_ty });
-            pushes.push(quote! { spec.push_arg(&#arg_ident).expect("encode arg"); });
+            params.push(quote! { #arg_ident: impl #sm_call::IntoMoveArg<#value_ty> });
+            pushes.push(quote! { spec.push_value_arg(#arg_ident).expect("encode arg"); });
         }
     }
 

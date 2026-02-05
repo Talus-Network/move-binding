@@ -119,7 +119,7 @@ fn main() {
 
 ```rust
 use std::str::FromStr;
-use sui_move_call::{CallArg, CallSpec, ReceivingMoveObject, SharedMoveObject};
+use sui_move_call::{CallArg, CallArgument, CallSpec, ReceivingMoveObject, SharedMoveObject};
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
 #[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
@@ -147,8 +147,14 @@ let mut spec = CallSpec::new(package, "demo", "run").unwrap();
 spec.push_arg(&shared).unwrap();
 spec.push_arg(&receiving).unwrap();
 
-assert!(matches!(spec.arguments[0], CallArg::Shared(_)));
-assert!(matches!(spec.arguments[1], CallArg::Receiving(_)));
+assert!(matches!(
+    spec.arguments[0],
+    CallArgument::Input(CallArg::Shared(_))
+));
+assert!(matches!(
+    spec.arguments[1],
+    CallArgument::Input(CallArg::Receiving(_))
+));
 ```
 
 ## Non-goals

@@ -6,7 +6,7 @@ This crate solves one problem: **turn on-chain Move package metadata into Rust s
 fits the layered `sui-move*` stack.
 
 - `sui-move`: Move-shaped types (`MoveType`, `MoveStruct`, abilities)
-- `sui-move-call`: `CallSpec` + typed argument traits (`ToCallArg`, `ObjectArg<T>`)
+- `sui-move-call`: typed call specs (`CallSpec`) + PTB values (`PtbValue<T>`) + input traits
 - `sui-move-ptb`: build a Sui programmable transaction (PTB) from `CallSpec`
 - `sui-move-runtime`: cursor-driven runtime for the Read → Tx → Commit mental model + auto-updating
   object handles
@@ -44,7 +44,7 @@ Given a `NormalizedPackage` (either fetched from gRPC or loaded from JSON), this
 - One Rust module per Move module (or a flat layout via `RenderOptions::flatten`)
 - Move datatypes as Rust types (structs use `#[sui_move::move_struct]` via `sui-move`’s `derive`
   feature)
-- Move functions as Rust functions that return `sui_move_call::CallSpec`
+- Move functions as Rust functions that return `sui_move_call::CallSpec<...>`
 - (optional) A `TxExt` trait implemented for `sui_move_runtime::Tx` (enable with
   `RenderOptions::emit_tx_ext`)
 
@@ -113,7 +113,7 @@ generated Rust API:
 
 - any parameter whose type has the Move `key` ability becomes `&impl ObjectArg<T>` (or `&mut ...`
   if the Move signature is `&mut`)
-- for `&mut` object parameters, the generated builder uses `CallSpec::push_arg_mut` so shared
+- for `&mut` object parameters, the generated builder uses `CallSpec::push_object_arg_mut` so shared
   objects are marked mutable in the transaction input when needed
 - any `TxContext` parameter is omitted (higher layers supply it when building the transaction)
 
@@ -189,9 +189,9 @@ let start = code.find("pub fn mutate").unwrap();
 let sig_end = start + code[start..].find('{').unwrap();
 let sig = &code[start..sig_end];
 
-assert!(sig.contains("arg0: &mut impl sm_call::ObjectArg<Obj>"));
+assert!(sig.contains("arg0: impl sm_call::IntoObjectArgMut<Obj>"));
 assert!(!sig.contains("TxContext"));
-assert!(code.contains("push_arg_mut(arg0)"));
+assert!(code.contains("push_object_arg_mut(arg0)"));
 ```
 
 ## Optional: runtime `Tx` extension trait
@@ -316,7 +316,7 @@ let start = code.find("pub fn id").unwrap();
 let sig_end = start + code[start..].find('{').unwrap();
 let sig = &code[start..sig_end];
 
-assert!(sig.contains("pub fn id<T0>(arg0: Vec<T0>)"));
+assert!(sig.contains("pub fn id<T0>(arg0: impl sm_call::IntoMoveArg<Vec<T0>>)"));
 assert!(sig.contains("where"));
 assert!(sig.contains("T0: sm::MoveType + sm::HasStore"));
 assert!(code.contains("spec.push_type_arg::<T0>();"));

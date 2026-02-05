@@ -390,7 +390,7 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for ReceivingObjec
 ///
 /// # Example
 /// ```
-/// use sui_move_call::{CallArg, CallSpec};
+    /// use sui_move_call::{CallArg, CallArgument, CallSpec};
 /// use sui_move_runtime::SharedObject;
 /// use sui_sdk_types::Address;
 ///
@@ -406,8 +406,11 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for ReceivingObjec
 /// let mut spec = CallSpec::new(package, "m", "f").unwrap();
 /// spec.push_arg(&shared).unwrap();
 ///
-/// assert!(matches!(spec.arguments[0], CallArg::Shared(_)));
-/// ```
+    /// assert!(matches!(
+    ///     spec.arguments[0],
+    ///     CallArgument::Input(CallArg::Shared(_))
+    /// ));
+    /// ```
 pub struct SharedObject<T> {
     input: SharedInput,
     phantom: PhantomData<T>,

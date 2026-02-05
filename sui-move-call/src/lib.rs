@@ -5,7 +5,9 @@ use std::marker::PhantomData;
 use std::str::FromStr;
 
 use sui_move::{HasKey, MoveStruct, MoveType};
-use sui_sdk_types::{Address, Identifier, Mutability, ObjectReference, SharedInput, TypeTag};
+use sui_sdk_types::{
+    Address, Argument, Identifier, Mutability, ObjectReference, SharedInput, TypeTag,
+};
 
 /// Canonical Sui transaction input kind.
 ///
@@ -14,6 +16,20 @@ use sui_sdk_types::{Address, Identifier, Mutability, ObjectReference, SharedInpu
 ///
 /// In this crate, call arguments are typically produced via [`ToCallArg`].
 pub use sui_sdk_types::Input as CallArg;
+
+/// A single argument to a Move call.
+///
+/// This is either:
+/// - a raw transaction input ([`CallArg`]) that must be allocated into the PTB input table, or
+/// - an already-resolved programmable transaction argument ([`Argument`]), typically the result
+///   of a prior PTB command.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CallArgument {
+    /// A raw transaction input.
+    Input(CallArg),
+    /// An already-resolved PTB argument.
+    Argument(Argument),
+}
 
 /// Typed object handle for key-bearing Move structs.
 ///
@@ -377,6 +393,216 @@ pub trait ObjectArg<T: MoveStruct + HasKey>: ToCallArgMut {}
 impl<T: MoveStruct + HasKey> ObjectArg<T> for MoveObject<T> {}
 impl<T: MoveStruct + HasKey> ObjectArg<T> for SharedMoveObject<T> {}
 
+/// Typed wrapper around a programmable-transaction [`Argument`].
+///
+/// When building a PTB, Move call results are represented as [`Argument`] indices, not as actual
+/// Rust values. `PtbValue<T>` keeps the type `T` at compile time while carrying the underlying
+/// [`Argument`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PtbValue<T> {
+    argument: Argument,
+    phantom: PhantomData<T>,
+}
+
+impl<T> PtbValue<T> {
+    /// Wrap an existing PTB argument.
+    pub fn new(argument: Argument) -> Self {
+        Self {
+            argument,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Borrow the underlying PTB argument.
+    pub fn as_argument(&self) -> &Argument {
+        &self.argument
+    }
+
+    /// Clone the underlying PTB argument.
+    pub fn argument(&self) -> Argument {
+        self.argument.clone()
+    }
+
+    /// Consume this wrapper and return the underlying PTB argument.
+    pub fn into_argument(self) -> Argument {
+        self.argument
+    }
+
+    /// Access a nested result value.
+    ///
+    /// This is useful when a Move call returns multiple values. In PTBs, additional return values
+    /// are addressed via [`Argument::NestedResult`].
+    pub fn nested<U>(&self, idx: u16) -> Option<PtbValue<U>> {
+        self.argument.nested(idx).map(PtbValue::new)
+    }
+}
+
+impl<T> From<PtbValue<T>> for Argument {
+    fn from(value: PtbValue<T>) -> Self {
+        value.argument
+    }
+}
+
+impl<T> From<&PtbValue<T>> for Argument {
+    fn from(value: &PtbValue<T>) -> Self {
+        value.argument.clone()
+    }
+}
+
+/// Convert a Rust value into a Move call argument (non-object).
+pub trait IntoMoveArg<T: MoveType> {
+    /// Convert into a [`CallArgument`].
+    fn into_move_arg(self) -> Result<CallArgument, CallArgError>;
+}
+
+/// Convert a Rust value into a Move call argument (object).
+pub trait IntoObjectArg<T: MoveStruct + HasKey> {
+    /// Convert into a [`CallArgument`].
+    fn into_object_arg(self) -> Result<CallArgument, CallArgError>;
+}
+
+/// Convert a Rust value into a Move call argument for a Move `&mut` object parameter.
+pub trait IntoObjectArgMut<T: MoveStruct + HasKey> {
+    /// Convert into a [`CallArgument`].
+    fn into_object_arg_mut(self) -> Result<CallArgument, CallArgError>;
+}
+
+impl<T: MoveType> IntoMoveArg<T> for T {
+    fn into_move_arg(self) -> Result<CallArgument, CallArgError> {
+        Ok(CallArgument::Input(self.to_call_arg()?))
+    }
+}
+
+impl<'a, T: MoveType> IntoMoveArg<T> for &'a T {
+    fn into_move_arg(self) -> Result<CallArgument, CallArgError> {
+        Ok(CallArgument::Input(self.to_call_arg()?))
+    }
+}
+
+impl<'a, T: MoveStruct + HasKey, A: ObjectArg<T>> IntoObjectArg<T> for &'a A {
+    fn into_object_arg(self) -> Result<CallArgument, CallArgError> {
+        Ok(CallArgument::Input(self.to_call_arg()?))
+    }
+}
+
+impl<'a, T: MoveStruct + HasKey, A: ObjectArg<T>> IntoObjectArgMut<T> for &'a mut A {
+    fn into_object_arg_mut(self) -> Result<CallArgument, CallArgError> {
+        Ok(CallArgument::Input(self.to_call_arg_mutable()?))
+    }
+}
+
+impl<T> IntoMoveArg<T> for PtbValue<T>
+where
+    T: MoveType,
+{
+    fn into_move_arg(self) -> Result<CallArgument, CallArgError> {
+        Ok(CallArgument::Argument(self.argument))
+    }
+}
+
+impl<'a, T> IntoMoveArg<T> for &'a PtbValue<T>
+where
+    T: MoveType,
+{
+    fn into_move_arg(self) -> Result<CallArgument, CallArgError> {
+        Ok(CallArgument::Argument(self.argument.clone()))
+    }
+}
+
+impl<T> IntoObjectArg<T> for PtbValue<T>
+where
+    T: MoveStruct + HasKey,
+{
+    fn into_object_arg(self) -> Result<CallArgument, CallArgError> {
+        Ok(CallArgument::Argument(self.argument))
+    }
+}
+
+impl<'a, T> IntoObjectArg<T> for &'a PtbValue<T>
+where
+    T: MoveStruct + HasKey,
+{
+    fn into_object_arg(self) -> Result<CallArgument, CallArgError> {
+        Ok(CallArgument::Argument(self.argument.clone()))
+    }
+}
+
+impl<T> IntoObjectArgMut<T> for PtbValue<T>
+where
+    T: MoveStruct + HasKey,
+{
+    fn into_object_arg_mut(self) -> Result<CallArgument, CallArgError> {
+        Ok(CallArgument::Argument(self.argument))
+    }
+}
+
+impl<'a, T> IntoObjectArgMut<T> for &'a PtbValue<T>
+where
+    T: MoveStruct + HasKey,
+{
+    fn into_object_arg_mut(self) -> Result<CallArgument, CallArgError> {
+        Ok(CallArgument::Argument(self.argument.clone()))
+    }
+}
+
+/// Build typed results from a Move call command result.
+pub trait CallReturn: Sized {
+    /// Build the return value from the base PTB result argument.
+    fn from_move_call_result(result: Argument) -> Self;
+}
+
+impl CallReturn for () {
+    fn from_move_call_result(_result: Argument) -> Self {}
+}
+
+impl CallReturn for Argument {
+    fn from_move_call_result(result: Argument) -> Self {
+        result
+    }
+}
+
+impl<T> CallReturn for PtbValue<T> {
+    fn from_move_call_result(result: Argument) -> Self {
+        PtbValue::new(result)
+    }
+}
+
+fn nested_result(result: &Argument, idx: u16) -> Argument {
+    result
+        .nested(idx)
+        .unwrap_or_else(|| panic!("expected Argument::Result for multi-return move call"))
+}
+
+impl<A, B> CallReturn for (PtbValue<A>, PtbValue<B>) {
+    fn from_move_call_result(result: Argument) -> Self {
+        (
+            PtbValue::new(nested_result(&result, 0)),
+            PtbValue::new(nested_result(&result, 1)),
+        )
+    }
+}
+
+impl<A, B, C> CallReturn for (PtbValue<A>, PtbValue<B>, PtbValue<C>) {
+    fn from_move_call_result(result: Argument) -> Self {
+        (
+            PtbValue::new(nested_result(&result, 0)),
+            PtbValue::new(nested_result(&result, 1)),
+            PtbValue::new(nested_result(&result, 2)),
+        )
+    }
+}
+
+impl<A, B, C, D> CallReturn for (PtbValue<A>, PtbValue<B>, PtbValue<C>, PtbValue<D>) {
+    fn from_move_call_result(result: Argument) -> Self {
+        (
+            PtbValue::new(nested_result(&result, 0)),
+            PtbValue::new(nested_result(&result, 1)),
+            PtbValue::new(nested_result(&result, 2)),
+            PtbValue::new(nested_result(&result, 3)),
+        )
+    }
+}
+
 /// Errors that can occur when constructing a `CallSpec`.
 #[derive(thiserror::Error, Debug)]
 pub enum CallSpecError {
@@ -427,7 +653,7 @@ pub enum CallSpecError {
 /// assert_eq!(spec.arguments.len(), 2);
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct CallSpec {
+pub struct CallSpec<R = ()> {
     /// Package ID that contains the Move module.
     pub package: Address,
     /// Move module identifier.
@@ -436,11 +662,13 @@ pub struct CallSpec {
     pub function: Identifier,
     /// Type arguments for the call (Move `TypeTag`s).
     pub type_arguments: Vec<TypeTag>,
-    /// Call arguments (Sui `Input`s).
-    pub arguments: Vec<CallArg>,
+    /// Call arguments (inputs and/or already-resolved PTB arguments).
+    pub arguments: Vec<CallArgument>,
+    #[serde(skip)]
+    phantom: PhantomData<R>,
 }
 
-impl CallSpec {
+impl CallSpec<()> {
     /// Create an empty call spec for a `(package, module, function)` triple.
     pub fn new(
         package: Address,
@@ -461,6 +689,33 @@ impl CallSpec {
             function,
             type_arguments: Vec::new(),
             arguments: Vec::new(),
+            phantom: PhantomData,
+        })
+    }
+}
+
+impl<R> CallSpec<R> {
+    /// Create an empty typed call spec for a `(package, module, function)` triple.
+    pub fn new_typed(
+        package: Address,
+        module: impl AsRef<str>,
+        function: impl AsRef<str>,
+    ) -> Result<Self, CallSpecError> {
+        let module_str = module.as_ref();
+        let function_str = function.as_ref();
+
+        let module = Identifier::from_str(module_str)
+            .map_err(|_| CallSpecError::Module(module_str.to_string()))?;
+        let function = Identifier::from_str(function_str)
+            .map_err(|_| CallSpecError::Function(function_str.to_string()))?;
+
+        Ok(Self {
+            package,
+            module,
+            function,
+            type_arguments: Vec::new(),
+            arguments: Vec::new(),
+            phantom: PhantomData,
         })
     }
 
@@ -474,7 +729,7 @@ impl CallSpec {
     /// This can fail for BCS encoding errors (pure values) and, for higher-layer object handles,
     /// for handle state errors (tombstoned/stale handles, kind mismatches, etc.).
     pub fn push_arg<A: ToCallArg>(&mut self, arg: &A) -> Result<(), CallArgError> {
-        self.arguments.push(arg.to_call_arg()?);
+        self.arguments.push(CallArgument::Input(arg.to_call_arg()?));
         Ok(())
     }
 
@@ -483,7 +738,8 @@ impl CallSpec {
     /// This differs from [`CallSpec::push_arg`] only for shared object handles: shared inputs must
     /// be marked mutable in the transaction input.
     pub fn push_arg_mut<A: ToCallArgMut>(&mut self, arg: &A) -> Result<(), CallArgError> {
-        self.arguments.push(arg.to_call_arg_mutable()?);
+        self.arguments
+            .push(CallArgument::Input(arg.to_call_arg_mutable()?));
         Ok(())
     }
 
@@ -492,14 +748,47 @@ impl CallSpec {
     /// This is an escape hatch for `sui_sdk_types::Input` variants that don't have typed wrappers
     /// in this crate.
     pub fn push_input(&mut self, input: CallArg) {
-        self.arguments.push(input);
+        self.arguments.push(CallArgument::Input(input));
+    }
+
+    /// Append a raw programmable-transaction argument.
+    pub fn push_argument(&mut self, arg: Argument) {
+        self.arguments.push(CallArgument::Argument(arg));
+    }
+
+    /// Append a non-object argument (pure value or prior PTB result).
+    pub fn push_value_arg<T: MoveType>(
+        &mut self,
+        arg: impl IntoMoveArg<T>,
+    ) -> Result<(), CallArgError> {
+        self.arguments.push(arg.into_move_arg()?);
+        Ok(())
+    }
+
+    /// Append an object argument (object input handle or prior PTB result).
+    pub fn push_object_arg<T: MoveStruct + HasKey>(
+        &mut self,
+        arg: impl IntoObjectArg<T>,
+    ) -> Result<(), CallArgError> {
+        self.arguments.push(arg.into_object_arg()?);
+        Ok(())
+    }
+
+    /// Append an object argument for a Move `&mut` parameter.
+    pub fn push_object_arg_mut<T: MoveStruct + HasKey>(
+        &mut self,
+        arg: impl IntoObjectArgMut<T>,
+    ) -> Result<(), CallArgError> {
+        self.arguments.push(arg.into_object_arg_mut()?);
+        Ok(())
     }
 }
 
 /// Convenience re-exports for downstream code.
 pub mod prelude {
     pub use crate::{
-        CallArg, CallArgError, CallSpec, CallSpecError, MoveObject, ObjectArg, ReceivingMoveObject,
+        CallArg, CallArgError, CallArgument, CallReturn, CallSpec, CallSpecError, IntoMoveArg,
+        IntoObjectArg, IntoObjectArgMut, MoveObject, ObjectArg, PtbValue, ReceivingMoveObject,
         SharedMoveObject, ToCallArg, ToCallArgMut,
     };
     pub use sui_move::prelude::*;

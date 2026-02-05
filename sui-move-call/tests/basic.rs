@@ -1,8 +1,8 @@
 use std::str::FromStr;
 
 use sui_move_call::{
-    CallArg, CallArgError, CallSpec, MoveObject, ReceivingMoveObject, SharedMoveObject, ToCallArg,
-    ToCallArgMut,
+    CallArg, CallArgError, CallArgument, CallSpec, MoveObject, ReceivingMoveObject, SharedMoveObject,
+    ToCallArg, ToCallArgMut,
 };
 use sui_sdk_types::{Address, Digest, FundsWithdrawal, ObjectReference, TypeTag, WithdrawFrom};
 
@@ -132,5 +132,5 @@ fn call_spec_push_input_accepts_non_typed_variants() {
     let mut spec = CallSpec::new(Address::from_str("0x1").unwrap(), "m", "f").unwrap();
     spec.push_input(withdrawal.clone());
 
-    assert_eq!(spec.arguments, vec![withdrawal]);
+    assert_eq!(spec.arguments, vec![CallArgument::Input(withdrawal)]);
 }
