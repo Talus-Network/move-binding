@@ -331,14 +331,24 @@ fn type_param_bounds(dt: &Datatype, use_aliases: bool) -> Vec<TokenStream> {
         .enumerate()
         .map(|(idx, p)| {
             let ty = format_ident!("T{idx}");
+            let has_key = p.constraints.contains(&Ability::Key);
+            let has_store = p.constraints.contains(&Ability::Store);
+            let has_copy = p.constraints.contains(&Ability::Copy);
+            // Move rule: `copy` implies `drop`.
+            let has_drop = p.constraints.contains(&Ability::Drop) || has_copy;
+
             let mut bounds: Vec<TokenStream> = vec![quote! { #sm::MoveType }];
-            for a in &p.constraints {
-                bounds.push(match a {
-                    Ability::Copy => quote! { #sm::HasCopy },
-                    Ability::Drop => quote! { #sm::HasDrop },
-                    Ability::Store => quote! { #sm::HasStore },
-                    Ability::Key => quote! { #sm::HasKey },
-                });
+            if has_store {
+                bounds.push(quote! { #sm::HasStore });
+            }
+            if has_copy {
+                bounds.push(quote! { #sm::HasCopy });
+            }
+            if has_drop {
+                bounds.push(quote! { #sm::HasDrop });
+            }
+            if has_key {
+                bounds.push(quote! { #sm::HasKey });
             }
             quote! { #ty: #(#bounds)+* }
         })

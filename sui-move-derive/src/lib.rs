@@ -105,7 +105,6 @@ pub fn move_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[cfg(test)]
 mod tests {
     use super::args::{AddressArg, MoveStructArgs};
-    use proc_macro2::Span;
     use std::collections::BTreeMap;
 
     #[test]
@@ -135,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    fn expands_struct_with_where_bounds_on_definition() {
+    fn expands_type_abilities_into_impl_where_bounds() {
         let args: MoveStructArgs =
             syn::parse_quote!(address = "0x1", module = "m", type_abilities = "T0: store");
 
@@ -148,22 +147,38 @@ mod tests {
         let out = crate::expand::expand_move_struct(args, input).expect("expand");
         let file: syn::File = syn::parse2(out).expect("parse expanded tokens as a file");
 
-        let struct_item = file
+        let move_struct_impl = file
             .items
             .iter()
             .find_map(|item| match item {
-                syn::Item::Struct(s) if s.ident == syn::Ident::new("S", Span::call_site()) => {
-                    Some(s)
+                syn::Item::Impl(imp) => {
+                    let Some((_, trait_path, _)) = &imp.trait_ else {
+                        return None;
+                    };
+                    if !trait_path
+                        .segments
+                        .last()
+                        .is_some_and(|seg| seg.ident == "MoveStruct")
+                    {
+                        return None;
+                    }
+                    let syn::Type::Path(self_ty) = imp.self_ty.as_ref() else {
+                        return None;
+                    };
+                    if self_ty.path.segments.last()?.ident != "S" {
+                        return None;
+                    }
+                    Some(imp)
                 }
                 _ => None,
             })
-            .expect("struct S in output");
+            .expect("impl MoveStruct for S in output");
 
-        let where_clause = struct_item
+        let where_clause = move_struct_impl
             .generics
             .where_clause
             .as_ref()
-            .expect("where clause on struct definition");
+            .expect("where clause on impl");
 
         let t0_bounds = where_clause
             .predicates

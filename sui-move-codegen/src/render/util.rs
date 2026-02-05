@@ -3,6 +3,8 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use std::collections::BTreeSet;
+
 use crate::ir::{NormalizedModule, NormalizedPackage};
 
 use super::{calls, idents, tx_ext, types, ExternalResolver, RenderOptions};
@@ -34,11 +36,15 @@ pub(crate) fn render_package_tokens(
     let reexports = if opts.flatten || !opts.emit_types {
         quote! {}
     } else {
+        let mut seen: BTreeSet<String> = BTreeSet::new();
         let mut reexp = Vec::new();
         for module in pkg.modules.values() {
             let module_ident = idents::ident(&module.name);
             for dt in &module.datatypes {
                 let ty_ident = idents::ident(&dt.name);
+                if !seen.insert(ty_ident.to_string()) {
+                    continue;
+                }
                 reexp.push(quote! { pub use #module_ident::#ty_ident; });
             }
         }
@@ -75,11 +81,15 @@ pub(crate) fn render_split_mod_rs_tokens(
     let reexports = if !opts.emit_types {
         quote! {}
     } else {
+        let mut seen: BTreeSet<String> = BTreeSet::new();
         let mut out = Vec::new();
         for module in pkg.modules.values() {
             let module_ident = idents::ident(&module.name);
             for dt in &module.datatypes {
                 let ty_ident = idents::ident(&dt.name);
+                if !seen.insert(ty_ident.to_string()) {
+                    continue;
+                }
                 out.push(quote! { pub use #module_ident::#ty_ident; });
             }
         }

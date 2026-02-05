@@ -137,7 +137,10 @@ pub(crate) fn expand_move_struct(
         }
     }
 
-    let mut where_bounds: Vec<syn::WherePredicate> = Vec::new();
+    let mut type_param_where_bounds: Vec<syn::WherePredicate> = Vec::new();
+    let mut copy_where_bounds: Vec<syn::WherePredicate> = Vec::new();
+    let mut drop_where_bounds: Vec<syn::WherePredicate> = Vec::new();
+    let mut store_where_bounds: Vec<syn::WherePredicate> = Vec::new();
     for param in &type_param_idents {
         let ident = &param.ident;
         let mut bounds: Vec<syn::TypeParamBound> = vec![parse_quote!(::sui_move::MoveType)];
@@ -157,7 +160,7 @@ pub(crate) fn expand_move_struct(
             }
         }
 
-        where_bounds.push(parse_quote!(#ident: #(#bounds)+*));
+        type_param_where_bounds.push(parse_quote!(#ident: #(#bounds)+*));
     }
 
     if has_key
@@ -177,13 +180,13 @@ pub(crate) fn expand_move_struct(
         }
         let ty = &field.ty;
         if has_copy {
-            where_bounds.push(parse_quote!(#ty: ::sui_move::HasCopy));
+            copy_where_bounds.push(parse_quote!(#ty: ::sui_move::HasCopy));
         }
         if has_drop {
-            where_bounds.push(parse_quote!(#ty: ::sui_move::HasDrop));
+            drop_where_bounds.push(parse_quote!(#ty: ::sui_move::HasDrop));
         }
         if has_store {
-            where_bounds.push(parse_quote!(#ty: ::sui_move::HasStore));
+            store_where_bounds.push(parse_quote!(#ty: ::sui_move::HasStore));
         }
     }
 
@@ -228,19 +231,16 @@ pub(crate) fn expand_move_struct(
         parse_quote!(::sui_move::__private::serde::Deserialize),
     ]);
 
-    // Apply computed bounds to the struct definition itself so that derive macros (e.g. serde)
-    // see the same constraints as the generated `MoveType`/`MoveStruct` impls.
-    let mut expanded_generics = generics.clone();
-    if !where_bounds.is_empty() {
-        expanded_generics
-            .make_where_clause()
-            .predicates
-            .extend(where_bounds.iter().cloned());
-    }
+    // Keep the struct definition's generics unchanged.
+    //
+    // We intentionally do not inject `MoveType`/ability bounds onto the type itself. In Move,
+    // a generic struct type is well-formed for any type arguments; abilities are conditional and
+    // gate what you can do with that instantiation. We model that by putting bounds on the
+    // generated impl blocks, not on the struct definition.
 
     let mut output_struct = input;
     output_struct.ident = struct_ident.clone();
-    output_struct.generics = expanded_generics.clone();
+    output_struct.generics = generics.clone();
     output_struct.data = Data::Struct(syn::DataStruct {
         struct_token: Default::default(),
         fields: Fields::Named(syn::FieldsNamed {
@@ -288,31 +288,6 @@ pub(crate) fn expand_move_struct(
         found
     });
 
-    let serde_has_bound_override = serde_attrs.iter().any(|attr| {
-        let syn::Meta::List(list) = &attr.meta else {
-            return false;
-        };
-
-        let mut found = false;
-        let parser = syn::meta::parser(|meta| {
-            if meta.path.is_ident("bound") {
-                found = true;
-            }
-
-            if meta.input.peek(syn::Token![=]) {
-                let _expr: syn::Expr = meta.value()?.parse()?;
-            } else if meta.input.peek(syn::token::Paren) {
-                let content;
-                syn::parenthesized!(content in meta.input);
-                let _tokens: proc_macro2::TokenStream = content.parse()?;
-            }
-
-            Ok(())
-        });
-        let _ = parser.parse2(list.tokens.clone());
-        found
-    });
-
     output_struct.attrs = other_attrs;
     output_struct
         .attrs
@@ -322,20 +297,32 @@ pub(crate) fn expand_move_struct(
             .attrs
             .push(parse_quote!(#[serde(crate = "sui_move::__private::serde")]));
     }
-    if !type_param_idents.is_empty() && !serde_has_bound_override {
-        output_struct.attrs.push(parse_quote!(#[serde(bound = "")]));
-    }
     output_struct.attrs.extend(serde_attrs);
 
-    let (impl_generics, ty_generics, where_clause) = expanded_generics.split_for_impl();
+    let mut move_generics = generics.clone();
+    if !type_param_where_bounds.is_empty() {
+        move_generics
+            .make_where_clause()
+            .predicates
+            .extend(type_param_where_bounds.iter().cloned());
+    }
+    let (impl_generics, ty_generics, where_clause) = move_generics.split_for_impl();
 
     let clone_impl = if has_copy {
+        let mut clone_generics = move_generics.clone();
+        if !copy_where_bounds.is_empty() {
+            clone_generics
+                .make_where_clause()
+                .predicates
+                .extend(copy_where_bounds.iter().cloned());
+        }
+        let (clone_impl_generics, _, clone_where_clause) = clone_generics.split_for_impl();
         let inits = fields.iter().filter_map(|f| {
             let ident = f.ident.as_ref()?;
             Some(quote! { #ident: ::core::clone::Clone::clone(&self.#ident), })
         });
         quote! {
-            impl #impl_generics ::core::clone::Clone for #struct_ident #ty_generics #where_clause {
+            impl #clone_impl_generics ::core::clone::Clone for #struct_ident #ty_generics #clone_where_clause {
                 fn clone(&self) -> Self {
                     Self {
                         #(#inits)*
@@ -350,23 +337,55 @@ pub(crate) fn expand_move_struct(
     let ability_impls = {
         let mut impls = Vec::new();
         if has_key {
+            let mut key_generics = move_generics.clone();
+            if !store_where_bounds.is_empty() {
+                key_generics
+                    .make_where_clause()
+                    .predicates
+                    .extend(store_where_bounds.iter().cloned());
+            }
+            let (key_impl_generics, _, key_where_clause) = key_generics.split_for_impl();
             impls.push(quote! {
-                impl #impl_generics ::sui_move::HasKey for #struct_ident #ty_generics #where_clause {}
+                impl #key_impl_generics ::sui_move::HasKey for #struct_ident #ty_generics #key_where_clause {}
             });
         }
         if has_store {
+            let mut store_generics = move_generics.clone();
+            if !store_where_bounds.is_empty() {
+                store_generics
+                    .make_where_clause()
+                    .predicates
+                    .extend(store_where_bounds.iter().cloned());
+            }
+            let (store_impl_generics, _, store_where_clause) = store_generics.split_for_impl();
             impls.push(quote! {
-                impl #impl_generics ::sui_move::HasStore for #struct_ident #ty_generics #where_clause {}
+                impl #store_impl_generics ::sui_move::HasStore for #struct_ident #ty_generics #store_where_clause {}
             });
         }
         if has_copy {
+            let mut copy_generics = move_generics.clone();
+            if !copy_where_bounds.is_empty() {
+                copy_generics
+                    .make_where_clause()
+                    .predicates
+                    .extend(copy_where_bounds.iter().cloned());
+            }
+            let (copy_impl_generics, _, copy_where_clause) = copy_generics.split_for_impl();
             impls.push(quote! {
-                impl #impl_generics ::sui_move::HasCopy for #struct_ident #ty_generics #where_clause {}
+                impl #copy_impl_generics ::sui_move::HasCopy for #struct_ident #ty_generics #copy_where_clause {}
             });
         }
         if has_drop {
+            let mut drop_generics = move_generics.clone();
+            if !drop_where_bounds.is_empty() {
+                drop_generics
+                    .make_where_clause()
+                    .predicates
+                    .extend(drop_where_bounds.iter().cloned());
+            }
+            let (drop_impl_generics, _, drop_where_clause) = drop_generics.split_for_impl();
             impls.push(quote! {
-                impl #impl_generics ::sui_move::HasDrop for #struct_ident #ty_generics #where_clause {}
+                impl #drop_impl_generics ::sui_move::HasDrop for #struct_ident #ty_generics #drop_where_clause {}
             });
         }
         quote! { #(#impls)* }
