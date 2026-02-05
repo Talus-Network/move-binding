@@ -11,7 +11,7 @@ use quote::{format_ident, quote};
 
 use crate::ir::{Ability, Datatype, DatatypeKind, Field, NormalizedPackage, TypeName, TypeRef};
 
-use super::{builtins, idents, ExternalResolver, RenderOptions};
+use super::{idents, ExternalResolver, RenderOptions};
 
 pub(crate) fn render_datatype(
     dt: &Datatype,
@@ -68,7 +68,6 @@ fn render_struct(
     let phantoms = phantom_params_string(dt);
     let type_abilities = type_abilities_string(dt);
 
-    let address_lit = syn::LitStr::new(address, proc_macro2::Span::call_site());
     let module_lit = syn::LitStr::new(module, proc_macro2::Span::call_site());
     let name_lit = syn::LitStr::new(move_name, proc_macro2::Span::call_site());
     let abilities_lit = abilities
@@ -110,7 +109,7 @@ fn render_struct(
     quote! {
         #doc
         #[#macro_path(
-            address = #address_lit,
+            address = PACKAGE,
             module = #module_lit,
             #name_arg
             #abilities_arg
@@ -269,7 +268,6 @@ fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool) -> TokenStream {
         quote! { sui_move }
     };
 
-    let address = syn::LitStr::new(&dt.type_name.address, proc_macro2::Span::call_site());
     let module = syn::LitStr::new(&dt.type_name.module, proc_macro2::Span::call_site());
     let name = syn::LitStr::new(&dt.type_name.name, proc_macro2::Span::call_site());
 
@@ -280,7 +278,7 @@ fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool) -> TokenStream {
 
     quote! {
         #sm::__private::sui_sdk_types::StructTag::new(
-            #sm::parse_address(#address).expect("invalid address literal"),
+            PACKAGE,
             #sm::parse_identifier(#module).expect("invalid module"),
             #sm::parse_identifier(#name).expect("invalid struct name"),
             vec![#(#ty_params_for_tag),*],
@@ -395,14 +393,6 @@ fn render_type_ref(
                 args.push(render_type_ref(a, current_type, pkg, opts, resolver));
             }
 
-            if let Some(builtin) = builtins::map_builtin(type_name, opts.use_aliases) {
-                if args.is_empty() {
-                    return builtin.path;
-                }
-                let path = builtin.path;
-                return quote! { #path<#(#args),*> };
-            }
-
             let is_local = is_local_type(type_name, pkg);
             if !is_local {
                 if let Some(resolver) = resolver {
@@ -484,14 +474,6 @@ fn render_type_ref_root(
             let mut args = Vec::new();
             for a in type_arguments {
                 args.push(render_type_ref_root(a, pkg, opts, resolver));
-            }
-
-            if let Some(builtin) = builtins::map_builtin(type_name, opts.use_aliases) {
-                if args.is_empty() {
-                    return builtin.path;
-                }
-                let path = builtin.path;
-                return quote! { #path<#(#args),*> };
             }
 
             let is_local = is_local_type(type_name, pkg);

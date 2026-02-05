@@ -8,9 +8,9 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use crate::ir::{Ability, Function, NormalizedModule, NormalizedPackage, TypeRef, Visibility};
+use crate::ir::{Ability, Function, NormalizedModule, NormalizedPackage, TypeRef};
 
-use super::{builtins, idents, types, ExternalResolver, RenderOptions};
+use super::{callable, idents, types, ExternalResolver, RenderOptions};
 
 pub(crate) fn render_functions(
     module: &NormalizedModule,
@@ -21,7 +21,7 @@ pub(crate) fn render_functions(
     module
         .functions
         .iter()
-        .filter(|f| matches!(f.visibility, Visibility::Public))
+        .filter(|f| callable::is_callable(f))
         .map(|f| render_function(module, f, pkg, opts, resolver))
         .collect()
 }
@@ -69,7 +69,7 @@ fn render_function(
         if f.is_entry {
             String::new()
         } else {
-            "Note: this function is not marked `entry`.".to_string()
+            "Note: callable as `public` (not `entry`).".to_string()
         },
     ]);
 
@@ -165,14 +165,11 @@ fn is_object_type(
     ty: &TypeRef,
     f: &Function,
     pkg: &NormalizedPackage,
-    opts: &RenderOptions,
+    _opts: &RenderOptions,
     resolver: Option<&ExternalResolver>,
 ) -> bool {
     match ty {
         TypeRef::Datatype { type_name, .. } => {
-            if let Some(builtin) = builtins::map_builtin(type_name, opts.use_aliases) {
-                return builtin.is_key;
-            }
             if let Some(resolver) = resolver {
                 if let Some(is_key) = resolver.type_has_key(type_name) {
                     return is_key;

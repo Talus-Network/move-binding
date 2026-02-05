@@ -44,7 +44,8 @@ pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// - Named-field structs only (`struct X { ... }`)
 ///
 /// # Arguments
-/// - `address = "0x..."` (required): Move address
+/// - `address = "0x..."` (required): Move address (string literal) or a Rust expression that
+///   evaluates to `sui_sdk_types::Address` (e.g. `PACKAGE`)
 /// - `module = "..."` (required): Move module name
 /// - `name = "..."` (optional): override Move struct name (defaults to Rust name)
 /// - `abilities = "key, store, copy, drop"` (optional): comma-separated Move abilities
@@ -56,8 +57,17 @@ pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// ```rust,no_run
 /// use std::marker::PhantomData;
 /// use sui_move::prelude::Address;
-/// use sui_move::types::{ID, UID};
 /// use sui_move_derive::move_struct;
+///
+/// #[move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+/// pub struct ID {
+///     pub bytes: Address,
+/// }
+///
+/// #[move_struct(address = "0x2", module = "object", abilities = "store")]
+/// pub struct UID {
+///     pub id: ID,
+/// }
 ///
 /// #[move_struct(
 ///     address = "0x1",
@@ -94,7 +104,7 @@ pub fn move_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use super::args::MoveStructArgs;
+    use super::args::{AddressArg, MoveStructArgs};
     use proc_macro2::Span;
     use std::collections::BTreeMap;
 
@@ -107,7 +117,10 @@ mod tests {
             phantoms = "T",
             type_abilities = "T: store, copy"
         );
-        assert_eq!(args.address.as_deref(), Some("0x1"));
+        assert!(matches!(
+            args.address.as_ref(),
+            Some(AddressArg::Literal(s)) if s == "0x1"
+        ));
         assert_eq!(args.module.as_deref(), Some("vault"));
         assert_eq!(args.name, None);
         assert_eq!(args.abilities, vec!["key".to_string(), "store".to_string()]);

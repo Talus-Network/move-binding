@@ -13,10 +13,9 @@ pub mod prelude {
     //!
     //! Intended for end-user code and examples.
     pub use crate::{
-        containers::DynamicField, containers::DynamicObjectField,
-        containers::DynamicObjectFieldWrapper, containers::MoveOption, containers::Table,
-        types::ID, types::UID, Copyable, Droppable, HasCopy, HasDrop, HasKey, HasStore,
-        MoveInstance, MoveStruct, MoveType, Storable,
+        decode_copyable, decode_keyed, decode_storable, parse_address, parse_identifier, Copyable,
+        DecodeError, Droppable, HasCopy, HasDrop, HasKey, HasStore, MoveInstance, MoveStruct,
+        MoveType, Storable, U256,
     };
     #[cfg(feature = "derive")]
     pub use crate::{move_module, move_struct};
@@ -30,12 +29,14 @@ pub mod __private {
 }
 
 mod builtins;
-pub mod containers;
 pub mod decode;
-pub mod primitives;
-pub mod types;
 pub use decode::{decode_copyable, decode_keyed, decode_storable};
-pub use primitives::*;
+
+/// Move `u256`.
+///
+/// This is a minimal representation that BCS-encodes as 32 little-endian bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct U256(pub [u8; 32]);
 
 /// A Rust type that corresponds to a Move type.
 ///
@@ -71,10 +72,6 @@ pub trait MoveType: Serialize + for<'de> Deserialize<'de> + fmt::Debug + Partial
         bcs::from_bytes(bytes)
     }
 
-    /// Convert this value into JSON using `serde_json`.
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serialization should not fail")
-    }
 }
 
 /// A Move struct type (including any type parameters).
@@ -84,11 +81,32 @@ pub trait MoveType: Serialize + for<'de> Deserialize<'de> + fmt::Debug + Partial
 ///
 /// # Example
 /// ```
-/// use sui_move::prelude::*;
+/// use sui_move::{MoveStruct, MoveType};
+/// use sui_sdk_types::{StructTag, TypeTag};
 ///
-/// let tag = sui_move::types::UID::struct_tag_static();
-/// assert_eq!(tag.module().to_string(), "object");
-/// assert_eq!(tag.name().to_string(), "UID");
+/// #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// struct Demo;
+///
+/// impl MoveType for Demo {
+///     fn type_tag_static() -> TypeTag {
+///         TypeTag::Struct(Box::new(<Self as MoveStruct>::struct_tag_static()))
+///     }
+/// }
+///
+/// impl MoveStruct for Demo {
+///     fn struct_tag_static() -> StructTag {
+///         StructTag::new(
+///             sui_move::parse_address("0x1").unwrap(),
+///             sui_move::parse_identifier("m").unwrap(),
+///             sui_move::parse_identifier("Demo").unwrap(),
+///             vec![],
+///         )
+///     }
+/// }
+///
+/// let tag = Demo::struct_tag_static();
+/// assert_eq!(tag.module().to_string(), "m");
+/// assert_eq!(tag.name().to_string(), "Demo");
 /// ```
 pub trait MoveStruct: MoveType {
     /// Construct the static struct tag (including type arguments).

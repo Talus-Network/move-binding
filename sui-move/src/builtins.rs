@@ -3,9 +3,10 @@
 //! This module provides mappings for:
 //! - integer and boolean primitives (`u8`, `u16`, `u32`, `u64`, `u128`, `bool`)
 //! - `sui_sdk_types::Address`
+//! - Move `u256` via [`crate::U256`]
 //! - `Vec<T>` as Move `vector<T>`
 
-use crate::{HasCopy, HasDrop, HasStore, MoveType};
+use crate::{HasCopy, HasDrop, HasStore, MoveType, U256};
 
 macro_rules! impl_primitive {
     ($ty:ty, $variant:ident) => {
@@ -30,6 +31,12 @@ impl MoveType for sui_sdk_types::Address {
     }
 }
 
+impl MoveType for U256 {
+    fn type_tag_static() -> sui_sdk_types::TypeTag {
+        sui_sdk_types::TypeTag::U256
+    }
+}
+
 impl<T: MoveType> MoveType for Vec<T> {
     fn type_tag_static() -> sui_sdk_types::TypeTag {
         sui_sdk_types::TypeTag::Vector(Box::new(T::type_tag_static()))
@@ -51,6 +58,7 @@ impl_ability_markers_primitive!(u64);
 impl_ability_markers_primitive!(u128);
 impl_ability_markers_primitive!(bool);
 impl_ability_markers_primitive!(sui_sdk_types::Address);
+impl_ability_markers_primitive!(U256);
 
 impl<T: HasCopy> HasCopy for Vec<T> {}
 impl<T: HasDrop> HasDrop for Vec<T> {}

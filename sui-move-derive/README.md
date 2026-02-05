@@ -110,8 +110,17 @@ You can satisfy those requirements either by:
 ```rust,no_run
 use std::marker::PhantomData;
 use sui_move::prelude::Address;
-use sui_move::types::{ID, UID};
 use sui_move_derive::move_struct;
+
+#[move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+pub struct ID {
+    pub bytes: Address,
+}
+
+#[move_struct(address = "0x2", module = "object", abilities = "store")]
+pub struct UID {
+    pub id: ID,
+}
 
 #[move_struct(
     address = "0x1",
@@ -152,10 +161,16 @@ Similarly, invalid ability combinations are rejected:
 
 ```rust,compile_fail
 use sui_move_derive::move_struct;
+use sui_move::prelude::Address;
 
 // A struct cannot be both `key` and `copy`.
+#[move_struct(address = "0x2", module = "object", abilities = "store")]
+pub struct UID {
+    pub id: Address,
+}
+
 #[move_struct(address = "0x1", module = "broken", abilities = "key, store, copy")]
 pub struct KeyAndCopy {
-    pub id: sui_move::types::UID,
+    pub id: UID,
 }
 ```

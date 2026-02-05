@@ -194,9 +194,6 @@ async fn fetch_dependency_closure(
         // Enqueue dependency package ids referenced by types.
         let deps = referenced_external_packages(&pkg);
         for dep in deps {
-            if is_framework_address(&dep) {
-                continue;
-            }
             if alias_to_storage.contains_key(&dep) {
                 continue;
             }
@@ -222,9 +219,6 @@ fn referenced_external_packages(pkg: &NormalizedPackage) -> BTreeSet<String> {
             return;
         }
         let addr = normalize_address(&type_name.address);
-        if is_framework_address(&addr) {
-            return;
-        }
         out.insert(addr);
     };
 
@@ -274,10 +268,6 @@ fn visit_type_ref(ty: &TypeRef, visit: &mut impl FnMut(&TypeName)) {
         }
         _ => {}
     }
-}
-
-fn is_framework_address(addr: &str) -> bool {
-    addr == "0x1" || addr == "0x2"
 }
 
 fn is_local_type(type_name: &TypeName, pkg: &NormalizedPackage) -> bool {
@@ -541,7 +531,7 @@ mod tests {
     use crate::ir::*;
 
     #[test]
-    fn referenced_external_packages_skips_framework_and_local() {
+    fn referenced_external_packages_includes_framework_and_skips_local() {
         let pkg = NormalizedPackage {
             storage_id: "0xa".into(),
             original_id: Some("0xa0".into()),
@@ -603,6 +593,6 @@ mod tests {
         };
 
         let deps = referenced_external_packages(&pkg);
-        assert_eq!(deps, BTreeSet::from(["0xb".to_string()]));
+        assert_eq!(deps, BTreeSet::from(["0x2".to_string(), "0xb".to_string()]));
     }
 }

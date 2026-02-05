@@ -97,7 +97,13 @@ If you want a one-shot action, use the `tx!` macro variants:
 use sui_move_runtime::prelude::*;
 use sui_sdk_types::Address;
 
-# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: Address, coin: Object<sui_move::coin::Coin<sui_move::sui::SUI>>) -> Result<(), Error> {
+# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+# struct ID { bytes: Address }
+# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+# struct UID { id: ID }
+# #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+# struct DemoCoin { id: UID }
+# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: Address, coin: Object<DemoCoin>) -> Result<(), Error> {
 let _sim = sui_move_runtime::tx!(simulate, &mut rt, sender => {
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 })
@@ -171,9 +177,19 @@ If you need a specific input mode, derive an explicit view at the moment it matt
 ```rust,no_run
 use sui_move_runtime::prelude::*;
 
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+struct ID {
+    bytes: Address,
+}
+
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: ID,
+}
+
 #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Demo {
-    id: sui_move::types::UID,
+    id: UID,
 }
 
 fn views(obj: Object<Demo>) -> Result<(), sui_move_call::CallArgError> {

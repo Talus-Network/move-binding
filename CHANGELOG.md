@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 ### Added
 
 - Add `sui-move`: core Move-shaped type layer (traits, abilities, decoding).
-- Add Move framework primitives under `sui_move::primitives` (e.g. `coin`, `balance`, `vec_map`) with BCS-accurate tags/layouts.
+- Add `MoveType` + ability-marker impls for Move builtins (`u8/u16/u32/u64/u128`, `bool`, `Address`, `U256`, `Vec<T>`).
 - Add `sui-move-derive` and the `sui-move` `derive` feature for defining Move-shaped structs via macros.
 - Add `sui-move-call`: typed Move call descriptions (`CallSpec`) plus typed wrappers for Sui `Input` kinds (pure, immutable/owned, shared, receiving).
 - Add `sui-move-ptb`: minimal PTB builder that consumes `CallSpec` and produces `ProgrammableTransaction`.

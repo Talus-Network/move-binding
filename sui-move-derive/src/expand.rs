@@ -19,7 +19,7 @@ use syn::spanned::Spanned;
 use syn::{Data, DeriveInput, Field, FieldMutability, Fields, GenericParam, TypeParam};
 
 use crate::abilities::{parse_inline_abilities, AbilityFlags};
-use crate::args::MoveStructArgs;
+use crate::args::{AddressArg, MoveStructArgs};
 use crate::util::{has_phantom_attr, is_phantom_field_type, is_uid_field, parse_serde_attr};
 
 pub(crate) fn expand_move_struct(
@@ -195,6 +195,13 @@ pub(crate) fn expand_move_struct(
         .ok_or_else(|| syn::Error::new(span, "module is required in #[move_struct]"))?;
     let struct_name = args.name.unwrap_or_else(|| struct_ident.to_string());
 
+    let address_expr = match address {
+        AddressArg::Literal(addr) => quote! {
+            ::sui_move::parse_address(#addr).expect("invalid address literal")
+        },
+        AddressArg::Expr(expr) => quote! { #expr },
+    };
+
     let ty_params_for_tag = type_param_idents
         .iter()
         .map(|p| {
@@ -205,7 +212,7 @@ pub(crate) fn expand_move_struct(
 
     let struct_tag_builder = quote! {
         ::sui_move::__private::sui_sdk_types::StructTag::new(
-            ::sui_move::parse_address(#address).expect("invalid address literal"),
+            #address_expr,
             ::sui_move::parse_identifier(#module_name).expect("invalid module"),
             ::sui_move::parse_identifier(#struct_name).expect("invalid struct name"),
             vec![#(#ty_params_for_tag),*],

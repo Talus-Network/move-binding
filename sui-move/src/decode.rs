@@ -21,25 +21,91 @@ pub fn decode_copyable<T: Copyable + DeserializeOwned>(bytes: &[u8]) -> Result<T
 ///
 /// # Example
 /// ```
-/// use std::marker::PhantomData;
-/// use sui_sdk_types::Address;
-/// use sui_move::{balance::Balance, coin::Coin, decode_keyed, sui::SUI, types::ID, types::UID, MoveType};
+/// use sui_move::{decode_keyed, parse_address, parse_identifier, HasKey, MoveStruct, MoveType};
+/// use sui_sdk_types::{StructTag, TypeTag};
 ///
-/// let coin = Coin::<SUI> {
+/// #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// struct ID {
+///     bytes: sui_sdk_types::Address,
+/// }
+///
+/// impl MoveType for ID {
+///     fn type_tag_static() -> TypeTag {
+///         TypeTag::Struct(Box::new(<Self as MoveStruct>::struct_tag_static()))
+///     }
+/// }
+///
+/// impl MoveStruct for ID {
+///     fn struct_tag_static() -> StructTag {
+///         StructTag::new(
+///             parse_address("0x2").unwrap(),
+///             parse_identifier("object").unwrap(),
+///             parse_identifier("ID").unwrap(),
+///             vec![],
+///         )
+///     }
+/// }
+///
+/// #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// struct UID {
+///     id: ID,
+/// }
+///
+/// impl MoveType for UID {
+///     fn type_tag_static() -> TypeTag {
+///         TypeTag::Struct(Box::new(<Self as MoveStruct>::struct_tag_static()))
+///     }
+/// }
+///
+/// impl MoveStruct for UID {
+///     fn struct_tag_static() -> StructTag {
+///         StructTag::new(
+///             parse_address("0x2").unwrap(),
+///             parse_identifier("object").unwrap(),
+///             parse_identifier("UID").unwrap(),
+///             vec![],
+///         )
+///     }
+/// }
+///
+/// #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// struct DemoCoin {
+///     id: UID,
+///     value: u64,
+/// }
+///
+/// impl HasKey for DemoCoin {}
+///
+/// impl MoveType for DemoCoin {
+///     fn type_tag_static() -> TypeTag {
+///         TypeTag::Struct(Box::new(<Self as MoveStruct>::struct_tag_static()))
+///     }
+/// }
+///
+/// impl MoveStruct for DemoCoin {
+///     fn struct_tag_static() -> StructTag {
+///         StructTag::new(
+///             parse_address("0x1").unwrap(),
+///             parse_identifier("demo").unwrap(),
+///             parse_identifier("DemoCoin").unwrap(),
+///             vec![],
+///         )
+///     }
+/// }
+///
+/// let coin = DemoCoin {
 ///     id: UID {
 ///         id: ID {
-///             bytes: Address::new([0u8; 32]),
+///             bytes: sui_sdk_types::Address::new([0u8; 32]),
 ///         },
 ///     },
-///     balance: Balance::<SUI> {
-///         value: 10,
-///         phantom: PhantomData,
-///     },
+///     value: 10,
 /// };
 ///
 /// let bytes = coin.to_bcs().unwrap();
-/// let inst = decode_keyed::<Coin<SUI>>(<Coin<SUI> as MoveType>::type_tag_static(), &bytes).unwrap();
-/// assert_eq!(inst.value.balance.value, 10);
+/// let inst =
+///     decode_keyed::<DemoCoin>(<DemoCoin as MoveType>::type_tag_static(), &bytes).unwrap();
+/// assert_eq!(inst.value.value, 10);
 /// ```
 pub fn decode_keyed<T: MoveStruct + HasKey + DeserializeOwned>(
     type_tag: sui_sdk_types::TypeTag,

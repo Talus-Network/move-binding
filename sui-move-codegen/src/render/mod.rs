@@ -15,8 +15,8 @@ use std::path::Path;
 
 use crate::ir::NormalizedPackage;
 
-mod builtins;
 mod calls;
+mod callable;
 mod externals;
 mod idents;
 mod tx_ext;

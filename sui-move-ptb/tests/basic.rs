@@ -7,9 +7,19 @@ use sui_sdk_types::{
     WithdrawFrom,
 };
 
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+struct ID {
+    bytes: Address,
+}
+
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: ID,
+}
+
 #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Thing {
-    id: sui_move::types::UID,
+    id: UID,
 }
 
 fn mk_obj(id: &str, version: u64) -> ObjectReference {

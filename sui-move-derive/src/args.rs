@@ -9,12 +9,17 @@ use std::collections::BTreeMap;
 
 use syn::parse::{Parse, ParseStream, Parser};
 use syn::spanned::Spanned;
-use syn::Lit;
+
+#[derive(Clone)]
+pub(crate) enum AddressArg {
+    Literal(String),
+    Expr(syn::Expr),
+}
 
 /// Parsed arguments for `#[move_struct(...)]`.
 #[derive(Default)]
 pub(crate) struct MoveStructArgs {
-    pub(crate) address: Option<String>,
+    pub(crate) address: Option<AddressArg>,
     pub(crate) module: Option<String>,
     pub(crate) name: Option<String>,
     pub(crate) abilities: Vec<String>,
@@ -33,85 +38,61 @@ impl Parse for MoveStructArgs {
                 .get_ident()
                 .ok_or_else(|| syn::Error::new(meta.path.span(), "expected identifier key"))?
                 .to_string();
-            let lit: Lit = meta.value()?.parse()?;
+            let expr: syn::Expr = meta.value()?.parse()?;
 
             match ident.as_str() {
                 "address" => {
-                    if let Lit::Str(s) = lit {
-                        args.address = Some(s.value());
-                    } else {
-                        return Err(syn::Error::new(lit.span(), "address must be a string"));
+                    match expr {
+                        syn::Expr::Lit(expr_lit) => match expr_lit.lit {
+                            syn::Lit::Str(s) => args.address = Some(AddressArg::Literal(s.value())),
+                            other => {
+                                return Err(syn::Error::new(other.span(), "address must be a string literal or an Address expression"));
+                            }
+                        },
+                        other => {
+                            args.address = Some(AddressArg::Expr(other));
+                        }
                     }
                 }
                 "module" => {
-                    if let Lit::Str(s) = lit {
-                        args.module = Some(s.value());
-                    } else {
-                        return Err(syn::Error::new(lit.span(), "module must be a string"));
-                    }
+                    let s = expect_lit_str(expr, "module")?;
+                    args.module = Some(s.value());
                 }
                 "name" => {
-                    if let Lit::Str(s) = lit {
-                        args.name = Some(s.value());
-                    } else {
-                        return Err(syn::Error::new(lit.span(), "name must be a string"));
-                    }
+                    let s = expect_lit_str(expr, "name")?;
+                    args.name = Some(s.value());
                 }
                 "abilities" => {
-                    if let Lit::Str(s) = lit {
-                        args.abilities = s
-                            .value()
-                            .split(',')
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty())
-                            .collect();
-                    } else {
-                        return Err(syn::Error::new(
-                            lit.span(),
-                            "abilities must be a string literal, e.g., \"key, store\"",
-                        ));
-                    }
+                    let s = expect_lit_str(expr, "abilities")?;
+                    args.abilities = s
+                        .value()
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
                 }
                 "phantoms" => {
-                    if let Lit::Str(s) = lit {
-                        args.phantoms = s
-                            .value()
-                            .split(',')
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty())
-                            .collect();
-                    } else {
-                        return Err(syn::Error::new(
-                            lit.span(),
-                            "phantoms must be a string literal, e.g., \"T, U\"",
-                        ));
-                    }
+                    let s = expect_lit_str(expr, "phantoms")?;
+                    args.phantoms = s
+                        .value()
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
                 }
                 "type_abilities" => {
-                    if let Lit::Str(ref s) = lit {
-                        args.type_abilities = parse_type_abilities(&s.value(), lit.span())?;
-                    } else {
-                        return Err(syn::Error::new(
-                            lit.span(),
-                            "type_abilities must be a string literal, e.g., \"T: store, copy; U: drop\"",
-                        ));
-                    }
+                    let s = expect_lit_str(expr, "type_abilities")?;
+                    args.type_abilities = parse_type_abilities(&s.value(), s.span())?;
                 }
                 "uid_type" => {
-                    if let Lit::Str(ref s) = lit {
-                        let ty: syn::Type = syn::parse_str(&s.value()).map_err(|_| {
-                            syn::Error::new(
-                                s.span(),
-                                "uid_type must be a valid Rust type path, e.g., \"sui_move::types::UID\"",
-                            )
-                        })?;
-                        args.uid_type = Some(ty);
-                    } else {
-                        return Err(syn::Error::new(
-                            lit.span(),
-                            "uid_type must be a string literal path",
-                        ));
-                    }
+                    let s = expect_lit_str(expr, "uid_type")?;
+                    let ty: syn::Type = syn::parse_str(&s.value()).map_err(|_| {
+                        syn::Error::new(
+                            s.span(),
+                            "uid_type must be a valid Rust type path, e.g., \"crate::UID\"",
+                        )
+                    })?;
+                    args.uid_type = Some(ty);
                 }
                 other => {
                     return Err(syn::Error::new(
@@ -128,6 +109,22 @@ impl Parse for MoveStructArgs {
         parser.parse2(tokens)?;
 
         Ok(args)
+    }
+}
+
+fn expect_lit_str(expr: syn::Expr, key: &'static str) -> syn::Result<syn::LitStr> {
+    match expr {
+        syn::Expr::Lit(expr_lit) => match expr_lit.lit {
+            syn::Lit::Str(s) => Ok(s),
+            other => Err(syn::Error::new(
+                other.span(),
+                format!("{key} must be a string literal"),
+            )),
+        },
+        other => Err(syn::Error::new(
+            other.span(),
+            format!("{key} must be a string literal"),
+        )),
     }
 }
 
