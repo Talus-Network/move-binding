@@ -23,9 +23,15 @@ truthful to Sui’s “versioned objects + effects” model (`MODEL.md`):
 
 ```rust,no_run
 use sui_move_runtime::prelude::*;
-use sui_move::{coin::Coin, sui::SUI};
 use sui_sdk_types::{Address, PersonalMessage, Transaction, UserSignature};
 
+# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+# struct ID { bytes: Address }
+# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+# struct UID { id: ID }
+# #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+# struct DemoCoin { id: UID }
+#
 # #[derive(Clone)]
 # struct DummySigner;
 # impl sui_crypto::SuiSigner for DummySigner {
@@ -54,7 +60,7 @@ async fn demo() -> Result<(), Error> {
     let mut rt = Runtime::new(client, signer);
 
     // Read: fetch a typed runtime-owned handle.
-    let coin: Object<Coin<SUI>> = rt.read().object::<Coin<SUI>>(coin_id).await?;
+    let coin: Object<DemoCoin> = rt.read().object::<DemoCoin>(coin_id).await?;
 
     // Tx: one-shot build + commit with the `tx!` macro.
     let receipt = sui_move_runtime::tx!(&mut rt, sender => {
@@ -339,15 +345,21 @@ BCS layout expects Y” becomes an explicit error instead of a silent footgun.
 
 ```rust,no_run
 use sui_move_runtime::prelude::*;
-use sui_move::{coin::Coin, sui::SUI};
 use sui_sdk_types::Address;
 
 # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>) -> Result<(), Error> {
 let coin_id: Address = "0x2".parse().unwrap();
 
-let (coin, value): (Object<Coin<SUI>>, Coin<SUI>) = rt.read().get(coin_id).await?;
-let _latest: Coin<SUI> = rt.read().decode(&coin).await?;
-let _unchecked: Coin<SUI> = rt.read().decode_unchecked(&coin).await?;
+# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+# struct ID { bytes: Address }
+# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+# struct UID { id: ID }
+# #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+# struct DemoCoin { id: UID }
+
+let (coin, value): (Object<DemoCoin>, DemoCoin) = rt.read().get(coin_id).await?;
+let _latest: DemoCoin = rt.read().decode(&coin).await?;
+let _unchecked: DemoCoin = rt.read().decode_unchecked(&coin).await?;
 # let _ = value;
 # Ok(())
 # }
@@ -406,11 +418,18 @@ threading `&mut ObjectReference` everywhere.
 
 ```rust,no_run
 use sui_move_runtime::prelude::*;
-use sui_move::{coin::Coin, sui::SUI};
+use sui_sdk_types::Address;
+
+# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+# struct ID { bytes: Address }
+# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+# struct UID { id: ID }
+# #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+# struct DemoCoin { id: UID }
 
 #[derive(Clone)]
 struct Wallet {
-    coin: Object<Coin<SUI>>,
+    coin: Object<DemoCoin>,
 }
 
 # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {

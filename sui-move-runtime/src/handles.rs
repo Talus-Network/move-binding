@@ -104,7 +104,14 @@ struct TrackedObjectSnapshot {
 /// # Example
 /// ```rust,no_run
 /// use sui_move_runtime::prelude::*;
-/// use sui_move::{coin::Coin, sui::SUI};
+/// use sui_sdk_types::Address;
+///
+/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+/// # struct ID { bytes: Address }
+/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # struct UID { id: ID }
+/// # #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+/// # struct DemoCoin { id: UID }
 ///
 /// fn touch(coin: &impl ToCallArg) -> CallSpec {
 ///     let package: sui_sdk_types::Address = "0x1".parse().unwrap();
@@ -114,7 +121,7 @@ struct TrackedObjectSnapshot {
 /// }
 ///
 /// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
-/// let coin: Object<Coin<SUI>> = rt.read().object("0x2".parse().unwrap()).await?;
+/// let coin: Object<DemoCoin> = rt.read().object("0x2".parse().unwrap()).await?;
 /// let mut tx = rt.tx(sender);
 /// tx.call(touch(&coin))?;
 /// tx.commit().await?;
@@ -383,13 +390,18 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for ReceivingObjec
 ///
 /// # Example
 /// ```
-/// use sui_move::{coin::Coin, sui::SUI};
 /// use sui_move_call::{CallArg, CallSpec};
 /// use sui_move_runtime::SharedObject;
 /// use sui_sdk_types::Address;
 ///
 /// let package: Address = "0x1".parse().unwrap();
-/// let shared = SharedObject::<Coin<SUI>>::mutable("0x2".parse().unwrap(), 1);
+/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+/// # struct ID { bytes: Address }
+/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # struct UID { id: ID }
+/// # #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+/// # struct DemoCoin { id: UID }
+/// let shared = SharedObject::<DemoCoin>::mutable("0x2".parse().unwrap(), 1);
 ///
 /// let mut spec = CallSpec::new(package, "m", "f").unwrap();
 /// spec.push_arg(&shared).unwrap();
