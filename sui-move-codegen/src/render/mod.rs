@@ -10,10 +10,11 @@
 //! - generated functions return `sui-move-call::CallSpec`
 //! - optionally, a `TxExt` trait is emitted to add calls directly to `sui-move-runtime::Tx`
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use crate::ir::NormalizedPackage;
+use crate::ir::{Ability, NormalizedPackage, TypeName};
 
 mod builtins;
 mod calls;
@@ -48,6 +49,25 @@ pub struct RenderOptions {
     /// - `use sui_move as sm;`
     /// - `use sui_move_call as sm_call;`
     pub use_aliases: bool,
+    /// Rust paths for Move datatypes defined outside the package currently being rendered.
+    ///
+    /// This is the explicit cross-package symbol table. The renderer still treats unknown external
+    /// datatypes as compile errors, but entries in this map are rendered as generated Rust paths
+    /// instead of being folded into the `sui-move` core.
+    pub external_types: BTreeMap<TypeName, ExternalType>,
+}
+
+/// A generated Rust binding for a Move datatype outside the current package.
+///
+/// `rust_path` is the path to the generated Rust type without generic arguments, for example
+/// `sui_framework::object::UID` or `nexus_primitives::data::Data`. `is_key` carries the Move
+/// `key` ability so call generation can decide whether a parameter should be an object argument.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalType {
+    /// Rust path to the generated type, without generic arguments.
+    pub rust_path: String,
+    /// Whether the external Move datatype has the `key` ability.
+    pub is_key: bool,
 }
 
 impl Default for RenderOptions {
@@ -58,8 +78,100 @@ impl Default for RenderOptions {
             emit_tx_ext: false,
             flatten: false,
             use_aliases: true,
+            external_types: BTreeMap::new(),
         }
     }
+}
+
+impl RenderOptions {
+    /// Return options with one externally generated Move datatype registered.
+    ///
+    /// This is useful when a dependency package is rendered in a custom layout and the caller wants
+    /// to provide the exact Rust path for one datatype.
+    #[must_use]
+    pub fn with_external_type(
+        mut self,
+        type_name: TypeName,
+        rust_path: impl Into<String>,
+        is_key: bool,
+    ) -> Self {
+        self.add_external_type(type_name, rust_path, is_key);
+        self
+    }
+
+    /// Register one externally generated Move datatype.
+    ///
+    /// The path should name the generated Rust type without generic arguments. Generic arguments
+    /// are rendered from the Move type reference at the use site.
+    pub fn add_external_type(
+        &mut self,
+        type_name: TypeName,
+        rust_path: impl Into<String>,
+        is_key: bool,
+    ) {
+        self.external_types.insert(
+            type_name,
+            ExternalType {
+                rust_path: rust_path.into(),
+                is_key,
+            },
+        );
+    }
+
+    /// Return options with every datatype from an external package registered.
+    ///
+    /// The `rust_root` should point at the generated package module or crate. Datatypes are mapped
+    /// using the default generated layout: `<rust_root>::<move_module>::<move_type>`.
+    #[must_use]
+    pub fn with_external_package(
+        mut self,
+        pkg: &NormalizedPackage,
+        rust_root: impl Into<String>,
+    ) -> Self {
+        self.add_external_package(pkg, rust_root);
+        self
+    }
+
+    /// Register every datatype from an external package using the default generated layout.
+    ///
+    /// Entries are added for the datatype address reported by metadata plus the package storage id
+    /// and original id, when present. That keeps generated paths stable across the address forms Sui
+    /// metadata can expose for upgraded packages.
+    pub fn add_external_package(&mut self, pkg: &NormalizedPackage, rust_root: impl Into<String>) {
+        let rust_root = rust_root.into();
+
+        for module in pkg.modules.values() {
+            let module_ident = idents::ident(&module.name).to_string();
+            for dt in &module.datatypes {
+                let type_ident = idents::ident(&dt.name).to_string();
+                let rust_path = format!("{rust_root}::{module_ident}::{type_ident}");
+                let is_key = dt.abilities.contains(&Ability::Key);
+
+                for type_name in external_type_names(pkg, dt) {
+                    self.add_external_type(type_name, rust_path.clone(), is_key);
+                }
+            }
+        }
+    }
+}
+
+fn external_type_names(pkg: &NormalizedPackage, dt: &crate::ir::Datatype) -> Vec<TypeName> {
+    let mut names = vec![dt.type_name.clone()];
+    names.push(TypeName {
+        address: pkg.storage_id.clone(),
+        module: dt.module.clone(),
+        name: dt.name.clone(),
+    });
+    if let Some(original_id) = &pkg.original_id {
+        names.push(TypeName {
+            address: original_id.clone(),
+            module: dt.module.clone(),
+            name: dt.name.clone(),
+        });
+    }
+    names.sort();
+    names.dedup();
+    names
 }
 
 /// Render a normalized package into a single Rust source string.
@@ -214,6 +326,83 @@ mod tests {
         let code = render_package(&demo_pkg(), &RenderOptions::default());
         assert!(!code.contains("sm::types::UID"));
         assert!(code.contains("unknown external type `0x2::object::UID`"));
+    }
+
+    #[test]
+    fn registered_external_package_types_render_as_generated_paths() {
+        let external = NormalizedPackage {
+            storage_id: "0x9".into(),
+            original_id: None,
+            version: 0,
+            modules: BTreeMap::from([(
+                "dep".into(),
+                NormalizedModule {
+                    name: "dep".into(),
+                    datatypes: vec![Datatype {
+                        type_name: TypeName::parse("0x9::dep::External").unwrap(),
+                        module: "dep".into(),
+                        name: "External".into(),
+                        abilities: vec![Ability::Key, Ability::Store],
+                        type_parameters: vec![],
+                        kind: DatatypeKind::Struct { fields: vec![] },
+                    }],
+                    functions: vec![],
+                },
+            )]),
+        };
+
+        let pkg = NormalizedPackage {
+            storage_id: "0x1".into(),
+            original_id: None,
+            version: 0,
+            modules: BTreeMap::from([(
+                "m".into(),
+                NormalizedModule {
+                    name: "m".into(),
+                    datatypes: vec![Datatype {
+                        type_name: TypeName::parse("0x1::m::UsesExternal").unwrap(),
+                        module: "m".into(),
+                        name: "UsesExternal".into(),
+                        abilities: vec![Ability::Store],
+                        type_parameters: vec![],
+                        kind: DatatypeKind::Struct {
+                            fields: vec![Field {
+                                name: "external".into(),
+                                position: 0,
+                                ty: TypeRef::Datatype {
+                                    type_name: TypeName::parse("0x9::dep::External").unwrap(),
+                                    type_arguments: vec![],
+                                },
+                            }],
+                        },
+                    }],
+                    functions: vec![Function {
+                        name: "touch".into(),
+                        visibility: Visibility::Public,
+                        is_entry: true,
+                        type_parameters: vec![],
+                        parameters: vec![FunctionParam {
+                            name: "arg0".into(),
+                            ty: TypeRef::Ref {
+                                mutable: true,
+                                inner: Box::new(TypeRef::Datatype {
+                                    type_name: TypeName::parse("0x9::dep::External").unwrap(),
+                                    type_arguments: vec![],
+                                }),
+                            },
+                        }],
+                        return_types: vec![],
+                    }],
+                },
+            )]),
+        };
+
+        let opts = RenderOptions::default().with_external_package(&external, "dep_bindings");
+        let code = render_package(&pkg, &opts);
+
+        assert!(!code.contains("unknown external type"));
+        assert!(code.contains("pub external: dep_bindings::dep::External"));
+        assert!(code.contains("&mut impl sm_call::ObjectArg<dep_bindings::dep::External>"));
     }
 
     #[test]
