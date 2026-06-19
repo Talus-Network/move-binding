@@ -14,7 +14,8 @@ use std::process::Command;
 
 use sui_move_codegen::render::RenderOptions;
 use sui_move_codegen::workspace::{generate_bindings_workspace, WorkspaceOptions};
-use sui_move_codegen::{Address, Client};
+use sui_rpc::Client;
+use sui_sdk_types::Address;
 
 const DEFAULT_PACKAGE: &str = "0x4cc38b7c23bf14d7555503ab38a9748f9544c2c29c6519df412b4f6fb6971640";
 const DEFAULT_GRPC: &str = "http://127.0.0.1:9000";
@@ -38,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut grpc = std::env::var("SUI_GRPC").unwrap_or_else(|_| DEFAULT_GRPC.to_string());
     let mut out_dir: Option<PathBuf> = None;
     let mut externals: BTreeMap<String, PathBuf> = BTreeMap::new();
-    let mut check = false;
+    let mut check: bool = false;
 
     // Optional first positional arg: package id.
     if let Some(first) = args.peek() {

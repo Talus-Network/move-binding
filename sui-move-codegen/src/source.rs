@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 
 use sui_rpc::proto::sui::rpc::v2 as proto;
 
-pub use sui_rpc::Client;
 pub use sui_sdk_types::Address;
 
 use crate::ir::{

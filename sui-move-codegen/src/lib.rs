@@ -15,8 +15,6 @@ pub mod render;
 pub mod workspace;
 
 pub use crate::source::fetch_package;
-pub use crate::source::Address;
-pub use crate::source::Client;
 
 /// Errors from sourcing or normalizing package metadata.
 #[derive(thiserror::Error, Debug)]
