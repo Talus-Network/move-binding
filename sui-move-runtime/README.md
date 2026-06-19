@@ -23,7 +23,6 @@ truthful to Sui’s “versioned objects + effects” model (`MODEL.md`):
 
 ```rust,no_run
 use sui_move_runtime::prelude::*;
-use sui_move::{coin::Coin, sui::SUI};
 use sui_sdk_types::{Address, PersonalMessage, Transaction, UserSignature};
 
 # #[derive(Clone)]
@@ -36,11 +35,19 @@ use sui_sdk_types::{Address, PersonalMessage, Transaction, UserSignature};
 #         unimplemented!("provide a real signer (keypair, wallet, kms, ...)")
 #     }
 # }
+#
+# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+# struct UID { id: u64 }
+#
+# #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+# struct Demo {
+#     id: UID,
+# }
 
-fn touch_coin(coin: &impl ToCallArg, amount: u64) -> CallSpec {
+fn touch_object(object: &impl ToCallArg, amount: u64) -> CallSpec {
     let package: Address = "0x1".parse().unwrap();
     let mut spec = CallSpec::new(package, "demo", "touch").unwrap();
-    spec.push_arg(coin).unwrap();
+    spec.push_arg(object).unwrap();
     spec.push_arg(&amount).unwrap();
     spec
 }
@@ -49,24 +56,24 @@ async fn demo() -> Result<(), Error> {
     let client = sui_rpc::Client::new(sui_rpc::Client::TESTNET_FULLNODE).unwrap();
     let signer = DummySigner;
     let sender: Address = "0x123".parse().unwrap();
-    let coin_id: Address = "0x2".parse().unwrap();
+    let object_id: Address = "0x2".parse().unwrap();
 
     let mut rt = Runtime::new(client, signer);
 
     // Read: fetch a typed runtime-owned handle.
-    let coin: Object<Coin<SUI>> = rt.read().object::<Coin<SUI>>(coin_id).await?;
+    let object: Object<Demo> = rt.read().object::<Demo>(object_id).await?;
 
     // Tx: one-shot build + commit with the `tx!` macro.
     let receipt = sui_move_runtime::tx!(&mut rt, sender => {
-        touch_coin(&coin, 10);
+        touch_object(&object, 10);
     })
     .await?;
 
     // On-chain execution failures are recorded in the receipt (they are not transport errors).
     receipt.ensure_success()?;
 
-    // Back in Read: `coin`'s `ObjectReference` has been updated internally.
-    let _latest_ref = coin.reference();
+    // Back in Read: `object`'s `ObjectReference` has been updated internally.
+    let _latest_ref = object.reference();
     Ok(())
 }
 # let _ = demo;
@@ -97,7 +104,13 @@ If you want a one-shot action, use the `tx!` macro variants:
 use sui_move_runtime::prelude::*;
 use sui_sdk_types::Address;
 
-# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: Address, coin: Object<sui_move::coin::Coin<sui_move::sui::SUI>>) -> Result<(), Error> {
+# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+# struct UID { id: u64 }
+#
+# #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+# struct Demo { id: UID }
+#
+# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: Address, object: Object<Demo>) -> Result<(), Error> {
 let _sim = sui_move_runtime::tx!(simulate, &mut rt, sender => {
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 })
@@ -107,7 +120,7 @@ let _dbg = sui_move_runtime::tx!(inspect, &mut rt, sender => {
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 })
 .await?;
-# let _ = coin;
+# let _ = object;
 # Ok(())
 # }
 ```
@@ -171,9 +184,14 @@ If you need a specific input mode, derive an explicit view at the moment it matt
 ```rust,no_run
 use sui_move_runtime::prelude::*;
 
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: u64,
+}
+
 #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Demo {
-    id: sui_move::types::UID,
+    id: UID,
 }
 
 fn views(obj: Object<Demo>) -> Result<(), sui_move_call::CallArgError> {
@@ -323,15 +341,25 @@ BCS layout expects Y” becomes an explicit error instead of a silent footgun.
 
 ```rust,no_run
 use sui_move_runtime::prelude::*;
-use sui_move::{coin::Coin, sui::SUI};
 use sui_sdk_types::Address;
 
-# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>) -> Result<(), Error> {
-let coin_id: Address = "0x2".parse().unwrap();
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: u64,
+}
 
-let (coin, value): (Object<Coin<SUI>>, Coin<SUI>) = rt.read().get(coin_id).await?;
-let _latest: Coin<SUI> = rt.read().decode(&coin).await?;
-let _unchecked: Coin<SUI> = rt.read().decode_unchecked(&coin).await?;
+#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+struct Demo {
+    id: UID,
+    value: u64,
+}
+
+# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>) -> Result<(), Error> {
+let object_id: Address = "0x2".parse().unwrap();
+
+let (object, value): (Object<Demo>, Demo) = rt.read().get(object_id).await?;
+let _latest: Demo = rt.read().decode(&object).await?;
+let _unchecked: Demo = rt.read().decode_unchecked(&object).await?;
 # let _ = value;
 # Ok(())
 # }
@@ -390,26 +418,35 @@ threading `&mut ObjectReference` everywhere.
 
 ```rust,no_run
 use sui_move_runtime::prelude::*;
-use sui_move::{coin::Coin, sui::SUI};
+
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: u64,
+}
+
+#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+struct Demo {
+    id: UID,
+}
 
 #[derive(Clone)]
 struct Wallet {
-    coin: Object<Coin<SUI>>,
+    object: Object<Demo>,
 }
 
 # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
 let wallet = Wallet {
-    coin: rt.read().object("0x2".parse().unwrap()).await?,
+    object: rt.read().object("0x2".parse().unwrap()).await?,
 };
 
 let ptb = sui_move_ptb::ptb! {
-    // any call that mutates `wallet.coin` on-chain
+    // any call that mutates `wallet.object` on-chain
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 }?; 
 rt.tx(sender).commit_ptb(ptb).await?;
 
 // The `ObjectReference` is refreshed internally after commit.
-let _latest = wallet.coin.reference();
+let _latest = wallet.object.reference();
 # Ok(())
 # }
 ```

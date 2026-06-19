@@ -107,13 +107,29 @@ You can satisfy those requirements either by:
 
 ## Examples
 
-### `key` objects require `id: UID`
+### `key` objects require package-defined `id: UID`
 
 ```rust,no_run
 use std::marker::PhantomData;
 use sui_move::prelude::Address;
-use sui_move::types::{ID, UID};
 use sui_move_derive::move_struct;
+
+/// Local package declaration for `0x2::object::ID`.
+///
+/// Framework types are ordinary Move declarations from the type-kernel perspective. In production
+/// this shape should come from generated package bindings rather than from `sui-move` itself.
+#[move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+pub struct ID {
+    pub bytes: Address,
+}
+
+/// Local package declaration for `0x2::object::UID`.
+///
+/// A `key` object is recognized by an `id` field whose type is a package-defined `UID` shape.
+#[move_struct(address = "0x2", module = "object", abilities = "store")]
+pub struct UID {
+    pub id: ID,
+}
 
 #[move_struct(
     address = "0x1",
@@ -157,9 +173,15 @@ Similarly, invalid ability combinations are rejected:
 ```rust,compile_fail
 use sui_move_derive::move_struct;
 
+/// Minimal package-defined UID fixture for the compile-fail example.
+#[move_struct(address = "0x2", module = "object", abilities = "store")]
+pub struct UID {
+    pub id: u64,
+}
+
 // A struct cannot be both `key` and `copy`.
 #[move_struct(address = "0x1", module = "broken", abilities = "key, store, copy")]
 pub struct KeyAndCopy {
-    pub id: sui_move::types::UID,
+    pub id: UID,
 }
 ```

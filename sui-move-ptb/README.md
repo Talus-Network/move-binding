@@ -71,9 +71,14 @@ use sui_move_call::{CallSpec, MoveObject};
 use sui_move_ptb::ptb;
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: u64,
+}
+
 #[sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
 struct Vault {
-    id: sui_move::types::UID,
+    id: UID,
 }
 
 fn withdraw(package: Address, vault: &MoveObject<Vault>, amount: u64) -> CallSpec {
@@ -108,9 +113,14 @@ use sui_move_call::{CallSpec, MoveObject};
 use sui_move_ptb::ptb;
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: u64,
+}
+
 #[sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
 struct Vault {
-    id: sui_move::types::UID,
+    id: UID,
 }
 
 fn touch(package: Address, vault: &MoveObject<Vault>, amount: u64) -> CallSpec {
@@ -148,9 +158,14 @@ use sui_move_call::{CallArg, SharedMoveObject};
 use sui_move_ptb::PtbBuilder;
 use sui_sdk_types::{Address, Argument, Mutability};
 
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: u64,
+}
+
 #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Thing {
-    id: sui_move::types::UID,
+    id: UID,
 }
 
 let object_id = Address::from_str("0x2").unwrap();
@@ -187,9 +202,14 @@ use sui_move_call::{CallArg, MoveObject, ReceivingMoveObject};
 use sui_move_ptb::{BuildError, PtbBuilder};
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: u64,
+}
+
 #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Thing {
-    id: sui_move::types::UID,
+    id: UID,
 }
 
 let object_id = Address::from_str("0x2").unwrap();

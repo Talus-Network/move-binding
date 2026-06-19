@@ -76,9 +76,14 @@ structs.
 mod example {
     use sui_move::move_struct;
 
+    #[move_struct(address = "0x2", module = "object", abilities = "store")]
+    pub struct UID {
+        pub id: u64,
+    }
+
     #[move_struct(address = "0x1", module = "vault", abilities = "key, store")]
     pub struct Vault {
-        pub id: sui_move::types::UID,
+        pub id: UID,
         pub value: u64,
     }
 }
@@ -134,27 +139,25 @@ The crate implements `MoveType` (and ability markers) for:
 - `sui_sdk_types::Address`
 - `Vec<T>` where `T: MoveType`
 
-### Sui framework types (`sui_move::primitives`)
+### Framework types are not core
 
-`sui_move::primitives` contains minimal Rust mirrors of common Sui Move framework structs
-so they can be referenced in `TypeTag`s and decoded in a typed way (e.g. `coin::Coin<T>`,
-`balance::Balance<T>`, `vec_map::VecMap<K, V>`, `vec_set::VecSet<T>`, etc).
+`sui-move` intentionally does not export handwritten mirrors for Sui framework packages such as
+`0x2::object::UID`, `0x2::coin::Coin<T>`, `0x2::balance::Balance<T>`, or `0x1::option::Option<T>`.
+Those are package-defined datatypes, not language atoms.
 
-```rust
-use sui_move::{coin::Coin, sui::SUI, MoveType};
+If application code needs framework types, generate them from package metadata or define them in
+the consuming crate using the same `MoveType` / `MoveStruct` machinery used for user packages. This
+keeps the core crate small enough to serve as the trusted type kernel for higher-level generated
+bindings.
 
-let _tag = <Coin<SUI> as MoveType>::type_tag_static();
-```
+### What is deliberately excluded
 
-### Framework containers (`sui_move::containers`)
-
-`sui_move::containers` includes widely-used container structs such as `MoveOption<T>`,
-`Table<K, V>`, and dynamic field shapes, represented in a way that preserves their tags.
+- Framework mirrors such as `UID`, `ID`, `Coin<T>`, `Balance<T>`, `Table<K, V>`, and `Clock`
+- Package/module/function declaration IR
+- Move expression/function-body IR
+- Transaction building or execution
 
 ## Module guide
 
 - `sui_move::prelude`: convenient imports for common traits/types
-- `sui_move::types`: core Sui object types (`ID`, `UID`)
-- `sui_move::containers`: Move framework container shapes
-- `sui_move::primitives`: Sui framework “primitive” structs
 - `sui_move::decode`: ability-aware decode helpers

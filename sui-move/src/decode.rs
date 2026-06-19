@@ -21,25 +21,39 @@ pub fn decode_copyable<T: Copyable + DeserializeOwned>(bytes: &[u8]) -> Result<T
 ///
 /// # Example
 /// ```
-/// use std::marker::PhantomData;
-/// use sui_sdk_types::Address;
-/// use sui_move::{balance::Balance, coin::Coin, decode_keyed, sui::SUI, types::ID, types::UID, MoveType};
+/// use serde::{Deserialize, Serialize};
+/// use sui_move::{decode_keyed, parse_address, parse_identifier, HasKey, HasStore, MoveStruct, MoveType};
+/// use sui_sdk_types::{StructTag, TypeTag};
 ///
-/// let coin = Coin::<SUI> {
-///     id: UID {
-///         id: ID {
-///             bytes: Address::new([0u8; 32]),
-///         },
-///     },
-///     balance: Balance::<SUI> {
-///         value: 10,
-///         phantom: PhantomData,
-///     },
-/// };
+/// #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// struct Counter {
+///     value: u64,
+/// }
 ///
-/// let bytes = coin.to_bcs().unwrap();
-/// let inst = decode_keyed::<Coin<SUI>>(<Coin<SUI> as MoveType>::type_tag_static(), &bytes).unwrap();
-/// assert_eq!(inst.value.balance.value, 10);
+/// impl MoveType for Counter {
+///     fn type_tag_static() -> TypeTag {
+///         TypeTag::Struct(Box::new(Self::struct_tag_static()))
+///     }
+/// }
+///
+/// impl MoveStruct for Counter {
+///     fn struct_tag_static() -> StructTag {
+///         StructTag::new(
+///             parse_address("0x1").unwrap(),
+///             parse_identifier("counter").unwrap(),
+///             parse_identifier("Counter").unwrap(),
+///             vec![],
+///         )
+///     }
+/// }
+///
+/// impl HasKey for Counter {}
+/// impl HasStore for Counter {}
+///
+/// let value = Counter { value: 10 };
+/// let bytes = value.to_bcs().unwrap();
+/// let inst = decode_keyed::<Counter>(Counter::type_tag_static(), &bytes).unwrap();
+/// assert_eq!(inst.value.value, 10);
 /// ```
 pub fn decode_keyed<T: MoveStruct + HasKey + DeserializeOwned>(
     type_tag: sui_sdk_types::TypeTag,

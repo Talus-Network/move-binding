@@ -31,9 +31,12 @@ pub use sui_sdk_types::Input as CallArg;
 /// use sui_move_call::MoveObject;
 /// use sui_sdk_types::{Address, Digest, ObjectReference};
 ///
+/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # struct UID { id: u64 }
+/// #
 /// #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 /// struct Demo {
-///     id: sui_move::types::UID,
+///     id: UID,
 /// }
 ///
 /// let id = Address::from_str("0x1").unwrap();
@@ -82,9 +85,12 @@ impl<T: MoveStruct + HasKey> MoveObject<T> {
 /// use sui_move_call::SharedMoveObject;
 /// use sui_sdk_types::Address;
 ///
+/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # struct UID { id: u64 }
+/// #
 /// #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 /// struct SharedThing {
-///     id: sui_move::types::UID,
+///     id: UID,
 /// }
 ///
 /// let object_id = Address::from_str("0x1").unwrap();
@@ -168,9 +174,12 @@ impl<T: MoveStruct + HasKey> SharedMoveObject<T> {
 /// use sui_move_call::ReceivingMoveObject;
 /// use sui_sdk_types::{Address, Digest, ObjectReference};
 ///
+/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # struct UID { id: u64 }
+/// #
 /// #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 /// struct ReceivingThing {
-///     id: sui_move::types::UID,
+///     id: UID,
 /// }
 ///
 /// let id = Address::from_str("0x1").unwrap();
@@ -369,9 +378,12 @@ pub enum CallSpecError {
 /// use sui_move_call::{CallSpec, MoveObject};
 /// use sui_sdk_types::{Address, Digest, ObjectReference, TypeTag};
 ///
+/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # struct UID { id: u64 }
+/// #
 /// #[sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
 /// struct Vault {
-///     id: sui_move::types::UID,
+///     id: UID,
 /// }
 ///
 /// let package = Address::from_str("0x1").unwrap();

@@ -73,9 +73,14 @@ use sui_move::prelude::*;
 use sui_move_call::{CallSpec, MoveObject};
 use sui_sdk_types::{Address, Digest, ObjectReference, TypeTag};
 
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+pub struct UID {
+    pub id: u64,
+}
+
 #[sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
 pub struct Vault {
-    pub id: sui_move::types::UID,
+    pub id: UID,
 }
 
 pub fn withdraw(vault: &MoveObject<Vault>, amount: u64) -> CallSpec {
@@ -112,9 +117,14 @@ use std::str::FromStr;
 use sui_move_call::{CallArg, CallSpec, ReceivingMoveObject, SharedMoveObject};
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: u64,
+}
+
 #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Thing {
-    id: sui_move::types::UID,
+    id: UID,
 }
 
 let package = Address::from_str("0x1").unwrap();

@@ -104,19 +104,27 @@ struct TrackedObjectSnapshot {
 /// # Example
 /// ```rust,no_run
 /// use sui_move_runtime::prelude::*;
-/// use sui_move::{coin::Coin, sui::SUI};
 ///
-/// fn touch(coin: &impl ToCallArg) -> CallSpec {
+/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # struct UID {
+/// #     id: u64,
+/// # }
+/// # #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key, store")]
+/// # struct Demo {
+/// #     id: UID,
+/// # }
+///
+/// fn touch(object: &impl ToCallArg) -> CallSpec {
 ///     let package: sui_sdk_types::Address = "0x1".parse().unwrap();
 ///     let mut spec = CallSpec::new(package, "demo", "touch").unwrap();
-///     spec.push_arg(coin).unwrap();
+///     spec.push_arg(object).unwrap();
 ///     spec
 /// }
 ///
 /// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
-/// let coin: Object<Coin<SUI>> = rt.read().object("0x2".parse().unwrap()).await?;
+/// let object: Object<Demo> = rt.read().object("0x2".parse().unwrap()).await?;
 /// let mut tx = rt.tx(sender);
-/// tx.call(touch(&coin))?;
+/// tx.call(touch(&object))?;
 /// tx.commit().await?;
 /// # Ok(())
 /// # }
@@ -383,13 +391,21 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for ReceivingObjec
 ///
 /// # Example
 /// ```
-/// use sui_move::{coin::Coin, sui::SUI};
 /// use sui_move_call::{CallArg, CallSpec};
 /// use sui_move_runtime::SharedObject;
 /// use sui_sdk_types::Address;
 ///
+/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # struct UID {
+/// #     id: u64,
+/// # }
+/// # #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key, store")]
+/// # struct Demo {
+/// #     id: UID,
+/// # }
+///
 /// let package: Address = "0x1".parse().unwrap();
-/// let shared = SharedObject::<Coin<SUI>>::mutable("0x2".parse().unwrap(), 1);
+/// let shared = SharedObject::<Demo>::mutable("0x2".parse().unwrap(), 1);
 ///
 /// let mut spec = CallSpec::new(package, "m", "f").unwrap();
 /// spec.push_arg(&shared).unwrap();
@@ -629,9 +645,19 @@ mod tests {
         ObjectOut, Owner, TransactionEffects, TransactionEffectsV2,
     };
 
+    #[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, store")]
+    struct ID {
+        bytes: Address,
+    }
+
+    #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+    struct UID {
+        id: ID,
+    }
+
     #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
     struct Demo {
-        id: sui_move::types::UID,
+        id: UID,
     }
 
     #[test]

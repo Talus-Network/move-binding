@@ -52,14 +52,32 @@ pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// - `abilities = "key, store, copy, drop"` (optional): comma-separated Move abilities
 /// - `phantoms = "T, U"` (optional): comma-separated phantom type params
 /// - `type_abilities = "T: store, copy; U: drop"` (optional): ability expectations for type params
-/// - `uid_type = "path::to::UID"` (optional): override what counts as `UID` for `key` enforcement
+/// - `uid_type = "path::to::UID"` (optional): override what package-defined type counts as `UID`
+///   for `key` enforcement
 ///
 /// # Example
 /// ```rust,no_run
 /// use std::marker::PhantomData;
 /// use sui_move::prelude::Address;
-/// use sui_move::types::{ID, UID};
 /// use sui_move_derive::move_struct;
+///
+/// /// Local package declaration for `0x2::object::ID`.
+/// ///
+/// /// Framework types are ordinary Move declarations from the type-kernel perspective. In
+/// /// production this shape should come from generated package bindings rather than from
+/// /// `sui-move` itself.
+/// #[move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+/// pub struct ID {
+///     pub bytes: Address,
+/// }
+///
+/// /// Local package declaration for `0x2::object::UID`.
+/// ///
+/// /// A `key` object is recognized by an `id` field whose type is a package-defined `UID` shape.
+/// #[move_struct(address = "0x2", module = "object", abilities = "store")]
+/// pub struct UID {
+///     pub id: ID,
+/// }
 ///
 /// #[move_struct(
 ///     address = "0x1",

@@ -210,6 +210,13 @@ mod tests {
     }
 
     #[test]
+    fn external_framework_types_are_not_mapped_to_sui_move_core() {
+        let code = render_package(&demo_pkg(), &RenderOptions::default());
+        assert!(!code.contains("sm::types::UID"));
+        assert!(code.contains("unknown external type `0x2::object::UID`"));
+    }
+
+    #[test]
     fn renders_tx_ext_trait_when_enabled() {
         let opts = RenderOptions {
             emit_tx_ext: true,
