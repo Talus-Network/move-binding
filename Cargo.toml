@@ -9,14 +9,19 @@ members = [
     "sui-move-codegen",
 ]
 
+[workspace.package]
+license = "Apache-2.0"
+repository = "https://github.com/Talus-Network/move-binding"
+homepage = "https://github.com/Talus-Network/move-binding"
+
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
 bcs = "0.1.6"
-sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", features = ["serde"] }
-sui-rpc = { git = "https://github.com/mystenlabs/sui-rust-sdk" }
-sui-crypto = { git = "https://github.com/mystenlabs/sui-rust-sdk" }
+sui-sdk-types = { version = "0.3.1", git = "https://github.com/mystenlabs/sui-rust-sdk", features = ["serde"] }
+sui-rpc = { version = "0.3.1", git = "https://github.com/mystenlabs/sui-rust-sdk" }
+sui-crypto = { version = "0.3.0", git = "https://github.com/mystenlabs/sui-rust-sdk" }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }

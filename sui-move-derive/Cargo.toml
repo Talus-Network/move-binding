@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Procedural macros for sui-move typed structs."
 readme = "README.md"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/sui-move-derive"
 
 [lib]
 proc-macro = true
@@ -15,4 +19,3 @@ syn = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 sui-move = { path = "../sui-move" }
-

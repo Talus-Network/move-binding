@@ -73,17 +73,15 @@ pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
 ///     pub balance: Vec<T>,
 /// }
 ///
-/// fn main() {
-///     let _value = Vault::<u64> {
-///         id: UID {
-///             id: ID {
-///                 bytes: Address::new([0u8; 32]),
-///             },
+/// let _value = Vault::<u64> {
+///     id: UID {
+///         id: ID {
+///             bytes: Address::new([0u8; 32]),
 ///         },
-///         balance: vec![1, 2, 3],
-///         phantom_t: PhantomData,
-///     };
-/// }
+///     },
+///     balance: vec![1, 2, 3],
+///     phantom_t: PhantomData,
+/// };
 /// ```
 #[proc_macro_attribute]
 pub fn move_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
