@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 description = "Typed call arguments and call specifications for Move calls on Sui."
 readme = "README.md"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-sui-move = { path = "../sui-move" }
+sui-move = { version = "0.1.0", path = "../sui-move" }
 serde = { workspace = true, features = ["derive"] }
 bcs = { workspace = true }
 thiserror = { workspace = true }
@@ -14,4 +17,3 @@ sui-sdk-types = { workspace = true }
 
 [dev-dependencies]
 sui-move = { path = "../sui-move", features = ["derive"] }
-

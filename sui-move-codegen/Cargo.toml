@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 description = "Generate typed Rust bindings (types + CallSpec builders) from Sui Move package metadata."
 readme = "README.md"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
