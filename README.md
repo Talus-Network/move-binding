@@ -8,6 +8,11 @@ and higher layers build on lower ones.
 The top-level mental model is **Read → Tx → Commit** with a **cursor** that advances your local
 frontier by applying transaction effects. See `MODEL.md`.
 
+## Status
+
+This is an early `0.1` workspace. Public APIs may change before `1.0`; treat the crate boundaries
+and the `MODEL.md` invariants as more stable than individual function names.
+
 ## Crates (low → high)
 
 - `sui-move`: Move-shaped types (`MoveType`, `MoveStruct`, abilities, decoding helpers).
@@ -31,3 +36,15 @@ frontier by applying transaction effects. See `MODEL.md`.
 - Interface crates (module/function wrappers): start at `sui-move-call/README.md`.
 - Pure type modeling/decoding: start at `sui-move/README.md`.
 - Generating bindings from on-chain metadata: start at `sui-move-codegen/README.md`.
+
+## Development
+
+See `CONTRIBUTING.md` for local checks and pull request expectations.
+
+## Security
+
+See `SECURITY.md` for vulnerability reporting.
+
+## License
+
+Licensed under the Apache License, Version 2.0. See `LICENSE`.

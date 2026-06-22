@@ -30,15 +30,13 @@ pub struct Point {
     pub y: u64,
 }
 
-fn main() {
-    let tag = <Point as MoveType>::type_tag_static();
-    match tag {
-        TypeTag::Struct(struct_tag) => {
-            assert_eq!(struct_tag.module().to_string(), "demo");
-            assert_eq!(struct_tag.name().to_string(), "Point");
-        }
-        other => panic!("expected struct type tag, got {other:?}"),
+let tag = <Point as MoveType>::type_tag_static();
+match tag {
+    TypeTag::Struct(struct_tag) => {
+        assert_eq!(struct_tag.module().to_string(), "demo");
+        assert_eq!(struct_tag.name().to_string(), "Point");
     }
+    other => panic!("expected struct type tag, got {other:?}"),
 }
 ```
 
@@ -143,18 +141,16 @@ pub struct Vault<T> {
     pub balance: Vec<T>,
 }
 
-fn main() {
-    let _tag = <Vault<u64> as sui_move::MoveType>::type_tag_static();
-    let _value = Vault::<u64> {
-        id: UID {
-            id: ID {
-                bytes: Address::new([0u8; 32]),
-            },
+let _tag = <Vault<u64> as sui_move::MoveType>::type_tag_static();
+let _value = Vault::<u64> {
+    id: UID {
+        id: ID {
+            bytes: Address::new([0u8; 32]),
         },
-        balance: vec![1, 2, 3],
-        phantom_t: PhantomData,
-    };
-}
+    },
+    balance: vec![1, 2, 3],
+    phantom_t: PhantomData,
+};
 ```
 
 If you try to declare a `key` struct without an `id` field, it fails at compile time:
