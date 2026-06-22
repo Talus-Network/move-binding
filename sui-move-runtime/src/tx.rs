@@ -17,6 +17,8 @@ use sui_sdk_types::{
     TypeTag, UserSignature,
 };
 
+use crate::GrpcClient;
+
 #[derive(Clone, Debug)]
 pub(crate) struct FetchedMoveObject {
     pub(crate) reference: ObjectReference,
@@ -34,13 +36,13 @@ pub struct TxOptions {
     pub gas: Option<ObjectReference>,
     /// Optional explicit gas budget. Defaults to `Runtime::default_gas_budget`.
     pub gas_budget: Option<u64>,
-    /// Optional explicit gas price. Defaults to the reference gas price from RPC.
+    /// Optional explicit gas price. Defaults to the reference gas price from gRPC.
     pub gas_price: Option<u64>,
     /// Optional explicit expiration (TTL). Defaults to `None`.
     pub expiration: Option<TransactionExpiration>,
     /// Finality requested for the commit.
     ///
-    /// When `Checkpointed` (default), `commit*` uses an RPC method that also waits for checkpoint
+    /// When `Checkpointed` (default), `commit*` uses a gRPC method that also waits for checkpoint
     /// inclusion ("read-your-writes" consistency on that node).
     ///
     /// When `Executed`, `commit*` should only require execution (effects produced).
@@ -52,7 +54,7 @@ pub struct TxOptions {
 pub enum Finality {
     /// Only require that the transaction was executed (effects produced).
     Executed,
-    /// Also wait for the transaction to be observed in a checkpoint on the connected RPC node.
+    /// Also wait for the transaction to be observed in a checkpoint on the connected gRPC node.
     Checkpointed,
 }
 
@@ -99,7 +101,7 @@ pub enum CheckpointWaitOutcome {
 pub struct Receipt {
     /// Transaction digest.
     pub digest: Digest,
-    /// Transaction effects, if returned by RPC.
+    /// Transaction effects, if returned by gRPC.
     pub effects: Option<TransactionEffects>,
     /// Execution status, if known.
     pub status: Option<ExecutionStatus>,
@@ -147,9 +149,9 @@ pub struct SimulateOptions {
     ///
     /// Note: this option is ignored when checks are disabled (dev-inspect mode).
     ///
-    /// If you set this to `false`, the simulation RPC may require an explicit gas payment on the
+    /// If you set this to `false`, the simulation gRPC request may require an explicit gas payment on the
     /// provided transaction. The current `sui-move-runtime` simulation helper does not model
-    /// explicit gas payment configuration, so `false` is generally only useful if your RPC accepts
+    /// explicit gas payment configuration, so `false` is generally only useful if your gRPC server accepts
     /// omitted gas payment without auto-selection.
     pub do_gas_selection: bool,
 }
@@ -175,9 +177,9 @@ pub struct InspectOptions {}
 /// runtime-owned handles.
 #[derive(Clone, Debug)]
 pub struct SimulationReceipt {
-    /// Transaction digest, if returned by RPC.
+    /// Transaction digest, if returned by gRPC.
     pub digest: Option<Digest>,
-    /// Transaction effects, if returned by RPC.
+    /// Transaction effects, if returned by gRPC.
     pub effects: Option<TransactionEffects>,
 }
 
@@ -189,9 +191,9 @@ pub struct SimulationReceipt {
 /// `outputs[i]` corresponds to the `i`-th PTB command.
 #[derive(Clone, Debug)]
 pub struct InspectReceipt {
-    /// Transaction digest, if returned by RPC.
+    /// Transaction digest, if returned by gRPC.
     pub digest: Option<Digest>,
-    /// Transaction effects, if returned by RPC.
+    /// Transaction effects, if returned by gRPC.
     pub effects: Option<TransactionEffects>,
     /// Command outputs (return values + mutated-by-ref values), if requested.
     pub outputs: Vec<CommandOutputs>,
@@ -227,7 +229,7 @@ pub struct CommandOutputs {
 /// ```
 #[derive(Clone, Debug, Default)]
 pub struct BcsValue {
-    /// Optional type name for this BCS blob, if provided by RPC.
+    /// Optional type name for this BCS blob, if provided by gRPC.
     pub name: Option<String>,
     /// Raw BCS bytes.
     pub bytes: Vec<u8>,
@@ -240,11 +242,11 @@ pub enum TxError {
     #[error("sign transaction: {0}")]
     Sign(String),
 
-    /// RPC execution failed.
+    /// gRPC execution failed.
     #[error("execute transaction: {0}")]
     Execute(String),
 
-    /// RPC returned a response missing the executed transaction.
+    /// gRPC returned a response missing the executed transaction.
     #[error("missing executed transaction in response")]
     MissingExecuted,
 
@@ -252,7 +254,7 @@ pub enum TxError {
     #[error("proto conversion: {0}")]
     Proto(String),
 
-    /// Gas selection failed (no gas coin or RPC error).
+    /// Gas selection failed (no gas coin or gRPC error).
     #[error("select gas: {0}")]
     Gas(String),
 
@@ -267,11 +269,11 @@ pub enum TxError {
 /// Errors for simulate/dev-inspect operations.
 #[derive(thiserror::Error, Debug)]
 pub enum SimulateError {
-    /// RPC error.
-    #[error("simulate transaction: {0}")]
-    Rpc(String),
+    /// gRPC error.
+    #[error("simulate transaction over grpc: {0}")]
+    Grpc(String),
 
-    /// RPC returned a response missing the executed transaction.
+    /// gRPC returned a response missing the executed transaction.
     #[error("missing executed transaction in response")]
     MissingExecuted,
 
@@ -282,10 +284,10 @@ pub enum SimulateError {
 
 /// Errors for read/fetch helpers.
 #[derive(thiserror::Error, Debug)]
-pub enum RpcError {
-    /// RPC error.
-    #[error("rpc: {0}")]
-    Rpc(String),
+pub enum GrpcError {
+    /// gRPC error.
+    #[error("grpc: {0}")]
+    Grpc(String),
     /// Object not found.
     #[error("object {0} not found")]
     Missing(Address),
@@ -298,9 +300,9 @@ pub enum RpcError {
 }
 
 pub(crate) async fn fetch_object_reference_and_owner(
-    client: &mut sui_rpc::Client,
+    client: &mut GrpcClient,
     id: Address,
-) -> Result<FetchedMoveObject, RpcError> {
+) -> Result<FetchedMoveObject, GrpcError> {
     let mut req = GetObjectRequest::new(&id);
     let mut mask = FieldMaskTree::default();
     for path in [
@@ -322,23 +324,23 @@ pub(crate) async fn fetch_object_reference_and_owner(
         .ledger_client()
         .get_object(req)
         .await
-        .map_err(|e| RpcError::Rpc(e.to_string()))?
+        .map_err(|e| GrpcError::Grpc(e.to_string()))?
         .into_inner();
 
-    let obj_proto = resp.object.ok_or(RpcError::Missing(id))?;
+    let obj_proto = resp.object.ok_or(GrpcError::Missing(id))?;
 
     let proto_ref = obj_proto.object_reference();
     let reference: ObjectReference = (&proto_ref)
         .try_into()
-        .map_err(|e: TryFromProtoError| RpcError::Proto(e.to_string()))?;
+        .map_err(|e: TryFromProtoError| GrpcError::Proto(e.to_string()))?;
 
     let sui_obj: sui_sdk_types::Object = (&obj_proto)
         .try_into()
-        .map_err(|e: TryFromProtoError| RpcError::Proto(e.to_string()))?;
+        .map_err(|e: TryFromProtoError| GrpcError::Proto(e.to_string()))?;
 
     let move_struct = sui_obj
         .as_struct()
-        .ok_or(RpcError::NotMoveStruct(*reference.object_id()))?;
+        .ok_or(GrpcError::NotMoveStruct(*reference.object_id()))?;
 
     Ok(FetchedMoveObject {
         reference,
@@ -404,7 +406,7 @@ pub(crate) fn classify_owner(owner: &Owner) -> OwnerKind {
 }
 
 pub(crate) async fn submit_and_wait<S: SuiSigner>(
-    client: &mut sui_rpc::Client,
+    client: &mut GrpcClient,
     signer: &S,
     sender: Address,
     ptb: sui_sdk_types::ProgrammableTransaction,
@@ -502,7 +504,7 @@ pub(crate) async fn submit_and_wait<S: SuiSigner>(
                 .execution_client()
                 .execute_transaction(req)
                 .await
-                .map_err(|e| TxError::Execute(format!("execute_transaction rpc error: {e}")))?;
+                .map_err(|e| TxError::Execute(format!("execute_transaction grpc error: {e}")))?;
 
             let executed = response
                 .into_inner()
@@ -534,7 +536,7 @@ pub(crate) async fn submit_and_wait<S: SuiSigner>(
 }
 
 pub(crate) async fn fetch_transaction_effects(
-    client: &mut sui_rpc::Client,
+    client: &mut GrpcClient,
     digest: Digest,
 ) -> Result<Option<TransactionEffects>, TxError> {
     let mut req = GetTransactionRequest::new(&digest);
@@ -548,7 +550,7 @@ pub(crate) async fn fetch_transaction_effects(
         .ledger_client()
         .get_transaction(req)
         .await
-        .map_err(|e| TxError::Execute(format!("get_transaction rpc error: {e}")))?
+        .map_err(|e| TxError::Execute(format!("get_transaction grpc error: {e}")))?
         .into_inner();
 
     let executed = resp.transaction.ok_or(TxError::MissingExecuted)?;
@@ -557,7 +559,7 @@ pub(crate) async fn fetch_transaction_effects(
 }
 
 async fn select_gas_coin(
-    client: &mut sui_rpc::Client,
+    client: &mut GrpcClient,
     owner: &Address,
 ) -> Result<ObjectReference, TxError> {
     let gas_tag = TypeTag::Struct(Box::new(StructTag::gas_coin()));
@@ -579,7 +581,7 @@ async fn select_gas_coin(
 fn map_execute_wait_error(err: ExecuteAndWaitError, context_label: &'static str) -> TxError {
     match err {
         ExecuteAndWaitError::RpcError(e) => {
-            TxError::Execute(format!("{context_label} rpc error: {e}"))
+            TxError::Execute(format!("{context_label} grpc error: {e}"))
         }
         ExecuteAndWaitError::ProtoConversionError(e) => {
             TxError::Proto(format!("{context_label} proto conversion error: {e}"))
@@ -646,7 +648,7 @@ fn decode_effects_and_status(
 }
 
 pub(crate) async fn simulate_ptb(
-    client: &mut sui_rpc::Client,
+    client: &mut GrpcClient,
     sender: Address,
     ptb: sui_sdk_types::ProgrammableTransaction,
     opts: SimulateOptions,
@@ -667,14 +669,14 @@ pub(crate) async fn simulate_ptb(
         .execution_client()
         .simulate_transaction(req)
         .await
-        .map_err(|e| SimulateError::Rpc(e.to_string()))?
+        .map_err(|e| SimulateError::Grpc(e.to_string()))?
         .into_inner();
 
     simulation_receipt_from_response(resp)
 }
 
 pub(crate) async fn inspect_ptb(
-    client: &mut sui_rpc::Client,
+    client: &mut GrpcClient,
     sender: Address,
     ptb: sui_sdk_types::ProgrammableTransaction,
     _opts: InspectOptions,
@@ -699,7 +701,7 @@ pub(crate) async fn inspect_ptb(
         .execution_client()
         .simulate_transaction(req)
         .await
-        .map_err(|e| SimulateError::Rpc(e.to_string()))?
+        .map_err(|e| SimulateError::Grpc(e.to_string()))?
         .into_inner();
 
     inspect_receipt_from_response(resp)

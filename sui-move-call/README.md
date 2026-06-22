@@ -144,5 +144,5 @@ assert!(matches!(spec.arguments[1], CallArg::Receiving(_)));
 ## Non-goals
 
 - No transaction building: this crate does not produce `ProgrammableTransaction`.
-- No execution/runtime: this crate does not talk to RPC or submit transactions.
+- No execution/runtime: this crate does not talk to a network client or submit transactions.
 - No object fetching: object contents are not loaded or decoded here.

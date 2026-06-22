@@ -53,7 +53,7 @@ fn touch_object(object: &impl ToCallArg, amount: u64) -> CallSpec {
 }
 
 async fn demo() -> Result<(), Error> {
-    let client = sui_rpc::Client::new(sui_rpc::Client::TESTNET_FULLNODE).unwrap();
+    let client = GrpcClient::new(GrpcClient::TESTNET_FULLNODE).unwrap();
     let signer = DummySigner;
     let sender: Address = "0x123".parse().unwrap();
     let object_id: Address = "0x2".parse().unwrap();
@@ -82,7 +82,7 @@ async fn demo() -> Result<(), Error> {
 ## Core API
 
 - Runtime views:
-  - `Runtime`: owns RPC client, signer, and the handle cursor
+  - `Runtime`: owns gRPC client, signer, and the handle cursor
   - `Read`: read view (fetch typed handles)
   - `Tx`: transaction view (simulate/inspect/commit PTBs)
 - Ergonomic helper:
@@ -208,7 +208,7 @@ All transaction actions take a sender address and are methods on a transaction b
 - `call` / `arg` / `input`: build the PTB in-place.
 - `simulate`: calls `simulate_transaction` with checks enabled. No signature is required and the
   chain is not mutated. Handles are not updated.
-- `inspect`: calls `simulate_transaction` with checks disabled and asks RPC for
+- `inspect`: calls `simulate_transaction` with checks disabled and asks gRPC for
   `command_outputs`. This is meant for debugging and observability, not for guaranteeing that a
   real on-chain commit will succeed.
 - `commit`: builds a full `Transaction`, signs it, and submits it.
@@ -225,7 +225,7 @@ All transaction actions take a sender address and are methods on a transaction b
 `Tx::commit*` returns a [`Receipt`]. The receipt preserves recovery information:
 
 - `digest` is always present once submission succeeds.
-- `effects`/`status` are present when returned by RPC (this crate requests `effects.bcs`).
+- `effects`/`status` are present when returned by gRPC (this crate requests `effects.bcs`).
 - `requested_finality` is what the runtime asked for (defaults to checkpointed for commits).
 - `observed_finality` + `checkpoint_wait` describe what the runtime actually observed.
 
@@ -263,7 +263,7 @@ use sui_sdk_types::Address;
 # }
 #
 # async fn demo() -> Result<(), Error> {
-	let client = sui_rpc::Client::new(sui_rpc::Client::TESTNET_FULLNODE).unwrap();
+	let client = GrpcClient::new(GrpcClient::TESTNET_FULLNODE).unwrap();
 	let signer = DummySigner;
 	let sender: Address = "0x123".parse().unwrap();
 
@@ -320,13 +320,13 @@ assert_eq!(ptb.commands.len(), 1);
 
 - `TxOptions::sponsor`: gas owner (defaults to sender)
 - `TxOptions::gas`: explicit gas object reference (otherwise the runtime selects one coin owned by the gas owner)
-- `TxOptions::gas_price`: defaults to the reference gas price from RPC
+- `TxOptions::gas_price`: defaults to the reference gas price from gRPC
 - `TxOptions::gas_budget`: defaults to `Runtime::default_gas_budget`
 - `TxOptions::expiration`: optional TTL
 - `TxOptions::finality`: `Checkpointed` (default) or `Executed`
 
 `simulate`/`inspect` do not sign or submit, and do not currently model explicit gas payment
-configuration (they rely on the simulation RPC).
+configuration (they rely on the simulation gRPC).
 
 ## Typed reads (tag-checked decoding)
 
@@ -398,7 +398,7 @@ This crate makes handles *runtime-owned*:
 - `Read::object`/`Read::receiving_object` fetch the current `ObjectReference` and **intern** it in
   a cursor (your local frontier) keyed by `object_id`.
 - The returned `Object<T>` / `ReceivingObject<T>` is a small `Clone` handle backed by `Arc<RwLock<...>>`.
-- `Tx::commit` requests `effects.bcs` from RPC, decodes `TransactionEffects`, extracts updated
+- `Tx::commit` requests `effects.bcs` from gRPC, decodes `TransactionEffects`, extracts updated
   object information, derives an effects-based patch, and applies it to the cursor, updating any
   live handle cells that match those object ids.
 
@@ -480,7 +480,7 @@ assert_eq!(decoded, 10);
 - `Runtime::with_cursor_snapshot` / `Runtime::cursor_snapshot` provide snapshot/restore for the cursor.
 - `Runtime::sync_transaction` fetches effects by digest and advances the cursor (recovery escape hatch).
 - `Read::refresh_id` / `Read::refresh_ids` refresh cursor state explicitly (external drift escape hatch).
-- `Read::client_mut` gives direct access to the underlying `sui_rpc::Client` when needed.
+- `Read::grpc_client_mut` gives direct access to the underlying `GrpcClient` when needed.
 
 ## Non-goals
 
