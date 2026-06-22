@@ -7,7 +7,6 @@ readme = "README.md"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation = "https://docs.rs/sui-move"
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
