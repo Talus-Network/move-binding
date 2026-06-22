@@ -8,6 +8,11 @@ preserve the layer boundaries described in `MODEL.md`: low-level Move type model
 depend on transaction building or runtime behavior, and runtime code should not hide the
 Read -> Tx -> Commit boundary.
 
+## CLA
+
+Contributors are required to sign the [CLA]. This process is handled automatically by the
+[CLA Assistant].
+
 ## Code of Conduct
 
 This project adheres to a [Code of Conduct]. By participating, you are expected to uphold this
@@ -93,4 +98,6 @@ project: [LICENSE].
 [Issue Tracker]: https://github.com/Talus-Network/move-binding/issues
 [Code of Conduct]: CODE_OF_CONDUCT.md
 [LICENSE]: LICENSE
+[CLA]: https://gist.github.com/devops-talus/82cafc9752547baf4be140b6db1e8fd6
+[CLA Assistant]: https://cla-assistant.io/Talus-Network/move-binding
 [Conventional Commits]: https://www.conventionalcommits.org/
