@@ -325,12 +325,11 @@ assert!(code.contains("spec.push_type_arg::<T0>();"));
 ## Example: fetch over gRPC
 
 ```rust,no_run
-use sui_move_codegen::fetch_package;
-use sui_rpc::Client;
+use sui_move_codegen::{fetch_package, GrpcClient};
 use sui_sdk_types::Address;
 
 # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-let mut client = Client::new(Client::MAINNET_FULLNODE)?;
+let mut client = GrpcClient::new(GrpcClient::MAINNET_FULLNODE)?;
 let package_id: Address = "0x2".parse()?;
 
 let pkg = fetch_package(&mut client, package_id).await?;
@@ -348,6 +347,35 @@ To keep builds deterministic, fetch metadata once and commit it (JSON), then ren
 2. Render Rust bindings from that JSON during builds or as a pre-generation step
 
 This avoids putting network access in CI/build scripts.
+
+## Cross-package type resolution
+
+The renderer only treats primitive Move types and datatypes from the package being rendered as
+intrinsic. Framework and dependency types are still ordinary package declarations, so register their
+generated Rust bindings explicitly:
+
+```rust,no_run
+use sui_move_codegen::fetch_package;
+use sui_move_codegen::render::{render_package, RenderOptions};
+use sui_move_codegen::GrpcClient;
+use sui_sdk_types::Address;
+
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+let mut client = GrpcClient::new(GrpcClient::MAINNET_FULLNODE)?;
+
+let framework = fetch_package(&mut client, "0x2".parse::<Address>()?).await?;
+let app = fetch_package(&mut client, "0x123".parse::<Address>()?).await?;
+
+let opts = RenderOptions::default().with_external_package(&framework, "sui_framework");
+let code = render_package(&app, &opts);
+# let _ = code;
+# Ok(())
+# }
+```
+
+Without an external binding, an external datatype renders as a `compile_error!`. That keeps missing
+dependency bindings explicit instead of silently reintroducing handwritten framework mirrors into
+`sui-move`.
 
 ## Using the generated code
 

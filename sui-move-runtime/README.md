@@ -23,7 +23,6 @@ truthful to Sui’s “versioned objects + effects” model (`MODEL.md`):
 
 ```rust,no_run
 use sui_move_runtime::prelude::*;
-use sui_move::{coin::Coin, sui::SUI};
 use sui_sdk_types::{Address, PersonalMessage, Transaction, UserSignature};
 
 # #[derive(Clone)]
@@ -36,37 +35,45 @@ use sui_sdk_types::{Address, PersonalMessage, Transaction, UserSignature};
 #         unimplemented!("provide a real signer (keypair, wallet, kms, ...)")
 #     }
 # }
+#
+# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+# struct UID { id: u64 }
+#
+# #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+# struct Demo {
+#     id: UID,
+# }
 
-fn touch_coin(coin: &impl ToCallArg, amount: u64) -> CallSpec {
+fn touch_object(object: &impl ToCallArg, amount: u64) -> CallSpec {
     let package: Address = "0x1".parse().unwrap();
     let mut spec = CallSpec::new(package, "demo", "touch").unwrap();
-    spec.push_arg(coin).unwrap();
+    spec.push_arg(object).unwrap();
     spec.push_arg(&amount).unwrap();
     spec
 }
 
 async fn demo() -> Result<(), Error> {
-    let client = sui_rpc::Client::new(sui_rpc::Client::TESTNET_FULLNODE).unwrap();
+    let client = GrpcClient::new(GrpcClient::TESTNET_FULLNODE).unwrap();
     let signer = DummySigner;
     let sender: Address = "0x123".parse().unwrap();
-    let coin_id: Address = "0x2".parse().unwrap();
+    let object_id: Address = "0x2".parse().unwrap();
 
     let mut rt = Runtime::new(client, signer);
 
     // Read: fetch a typed runtime-owned handle.
-    let coin: Object<Coin<SUI>> = rt.read().object::<Coin<SUI>>(coin_id).await?;
+    let object: Object<Demo> = rt.read().object::<Demo>(object_id).await?;
 
     // Tx: one-shot build + commit with the `tx!` macro.
     let receipt = sui_move_runtime::tx!(&mut rt, sender => {
-        touch_coin(&coin, 10);
+        touch_object(&object, 10);
     })
     .await?;
 
     // On-chain execution failures are recorded in the receipt (they are not transport errors).
     receipt.ensure_success()?;
 
-    // Back in Read: `coin`'s `ObjectReference` has been updated internally.
-    let _latest_ref = coin.reference();
+    // Back in Read: `object`'s `ObjectReference` has been updated internally.
+    let _latest_ref = object.reference();
     Ok(())
 }
 # let _ = demo;
@@ -75,7 +82,7 @@ async fn demo() -> Result<(), Error> {
 ## Core API
 
 - Runtime views:
-  - `Runtime`: owns RPC client, signer, and the handle cursor
+  - `Runtime`: owns gRPC client, signer, and the handle cursor
   - `Read`: read view (fetch typed handles)
   - `Tx`: transaction view (simulate/inspect/commit PTBs)
 - Ergonomic helper:
@@ -97,7 +104,13 @@ If you want a one-shot action, use the `tx!` macro variants:
 use sui_move_runtime::prelude::*;
 use sui_sdk_types::Address;
 
-# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: Address, coin: Object<sui_move::coin::Coin<sui_move::sui::SUI>>) -> Result<(), Error> {
+# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+# struct UID { id: u64 }
+#
+# #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+# struct Demo { id: UID }
+#
+# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: Address, object: Object<Demo>) -> Result<(), Error> {
 let _sim = sui_move_runtime::tx!(simulate, &mut rt, sender => {
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 })
@@ -107,7 +120,7 @@ let _dbg = sui_move_runtime::tx!(inspect, &mut rt, sender => {
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 })
 .await?;
-# let _ = coin;
+# let _ = object;
 # Ok(())
 # }
 ```
@@ -171,9 +184,14 @@ If you need a specific input mode, derive an explicit view at the moment it matt
 ```rust,no_run
 use sui_move_runtime::prelude::*;
 
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: u64,
+}
+
 #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Demo {
-    id: sui_move::types::UID,
+    id: UID,
 }
 
 fn views(obj: Object<Demo>) -> Result<(), sui_move_call::CallArgError> {
@@ -190,7 +208,7 @@ All transaction actions take a sender address and are methods on a transaction b
 - `call` / `arg` / `input`: build the PTB in-place.
 - `simulate`: calls `simulate_transaction` with checks enabled. No signature is required and the
   chain is not mutated. Handles are not updated.
-- `inspect`: calls `simulate_transaction` with checks disabled and asks RPC for
+- `inspect`: calls `simulate_transaction` with checks disabled and asks gRPC for
   `command_outputs`. This is meant for debugging and observability, not for guaranteeing that a
   real on-chain commit will succeed.
 - `commit`: builds a full `Transaction`, signs it, and submits it.
@@ -207,7 +225,7 @@ All transaction actions take a sender address and are methods on a transaction b
 `Tx::commit*` returns a [`Receipt`]. The receipt preserves recovery information:
 
 - `digest` is always present once submission succeeds.
-- `effects`/`status` are present when returned by RPC (this crate requests `effects.bcs`).
+- `effects`/`status` are present when returned by gRPC (this crate requests `effects.bcs`).
 - `requested_finality` is what the runtime asked for (defaults to checkpointed for commits).
 - `observed_finality` + `checkpoint_wait` describe what the runtime actually observed.
 
@@ -245,7 +263,7 @@ use sui_sdk_types::Address;
 # }
 #
 # async fn demo() -> Result<(), Error> {
-	let client = sui_rpc::Client::new(sui_rpc::Client::TESTNET_FULLNODE).unwrap();
+	let client = GrpcClient::new(GrpcClient::TESTNET_FULLNODE).unwrap();
 	let signer = DummySigner;
 	let sender: Address = "0x123".parse().unwrap();
 
@@ -302,13 +320,13 @@ assert_eq!(ptb.commands.len(), 1);
 
 - `TxOptions::sponsor`: gas owner (defaults to sender)
 - `TxOptions::gas`: explicit gas object reference (otherwise the runtime selects one coin owned by the gas owner)
-- `TxOptions::gas_price`: defaults to the reference gas price from RPC
+- `TxOptions::gas_price`: defaults to the reference gas price from gRPC
 - `TxOptions::gas_budget`: defaults to `Runtime::default_gas_budget`
 - `TxOptions::expiration`: optional TTL
 - `TxOptions::finality`: `Checkpointed` (default) or `Executed`
 
 `simulate`/`inspect` do not sign or submit, and do not currently model explicit gas payment
-configuration (they rely on the simulation RPC).
+configuration (they rely on the simulation gRPC).
 
 ## Typed reads (tag-checked decoding)
 
@@ -323,15 +341,25 @@ BCS layout expects Y” becomes an explicit error instead of a silent footgun.
 
 ```rust,no_run
 use sui_move_runtime::prelude::*;
-use sui_move::{coin::Coin, sui::SUI};
 use sui_sdk_types::Address;
 
-# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>) -> Result<(), Error> {
-let coin_id: Address = "0x2".parse().unwrap();
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: u64,
+}
 
-let (coin, value): (Object<Coin<SUI>>, Coin<SUI>) = rt.read().get(coin_id).await?;
-let _latest: Coin<SUI> = rt.read().decode(&coin).await?;
-let _unchecked: Coin<SUI> = rt.read().decode_unchecked(&coin).await?;
+#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+struct Demo {
+    id: UID,
+    value: u64,
+}
+
+# async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>) -> Result<(), Error> {
+let object_id: Address = "0x2".parse().unwrap();
+
+let (object, value): (Object<Demo>, Demo) = rt.read().get(object_id).await?;
+let _latest: Demo = rt.read().decode(&object).await?;
+let _unchecked: Demo = rt.read().decode_unchecked(&object).await?;
 # let _ = value;
 # Ok(())
 # }
@@ -370,7 +398,7 @@ This crate makes handles *runtime-owned*:
 - `Read::object`/`Read::receiving_object` fetch the current `ObjectReference` and **intern** it in
   a cursor (your local frontier) keyed by `object_id`.
 - The returned `Object<T>` / `ReceivingObject<T>` is a small `Clone` handle backed by `Arc<RwLock<...>>`.
-- `Tx::commit` requests `effects.bcs` from RPC, decodes `TransactionEffects`, extracts updated
+- `Tx::commit` requests `effects.bcs` from gRPC, decodes `TransactionEffects`, extracts updated
   object information, derives an effects-based patch, and applies it to the cursor, updating any
   live handle cells that match those object ids.
 
@@ -390,26 +418,35 @@ threading `&mut ObjectReference` everywhere.
 
 ```rust,no_run
 use sui_move_runtime::prelude::*;
-use sui_move::{coin::Coin, sui::SUI};
+
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: u64,
+}
+
+#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+struct Demo {
+    id: UID,
+}
 
 #[derive(Clone)]
 struct Wallet {
-    coin: Object<Coin<SUI>>,
+    object: Object<Demo>,
 }
 
 # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
 let wallet = Wallet {
-    coin: rt.read().object("0x2".parse().unwrap()).await?,
+    object: rt.read().object("0x2".parse().unwrap()).await?,
 };
 
 let ptb = sui_move_ptb::ptb! {
-    // any call that mutates `wallet.coin` on-chain
+    // any call that mutates `wallet.object` on-chain
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 }?; 
 rt.tx(sender).commit_ptb(ptb).await?;
 
 // The `ObjectReference` is refreshed internally after commit.
-let _latest = wallet.coin.reference();
+let _latest = wallet.object.reference();
 # Ok(())
 # }
 ```
@@ -443,7 +480,7 @@ assert_eq!(decoded, 10);
 - `Runtime::with_cursor_snapshot` / `Runtime::cursor_snapshot` provide snapshot/restore for the cursor.
 - `Runtime::sync_transaction` fetches effects by digest and advances the cursor (recovery escape hatch).
 - `Read::refresh_id` / `Read::refresh_ids` refresh cursor state explicitly (external drift escape hatch).
-- `Read::client_mut` gives direct access to the underlying `sui_rpc::Client` when needed.
+- `Read::grpc_client_mut` gives direct access to the underlying `GrpcClient` when needed.
 
 ## Non-goals
 

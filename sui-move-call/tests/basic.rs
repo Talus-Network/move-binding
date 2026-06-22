@@ -6,9 +6,19 @@ use sui_move_call::{
 };
 use sui_sdk_types::{Address, Digest, FundsWithdrawal, ObjectReference, TypeTag, WithdrawFrom};
 
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, store")]
+struct ID {
+    bytes: Address,
+}
+
+#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+struct UID {
+    id: ID,
+}
+
 #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Demo {
-    id: sui_move::types::UID,
+    id: UID,
 }
 
 #[test]

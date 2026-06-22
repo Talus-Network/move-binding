@@ -11,7 +11,7 @@ use quote::{format_ident, quote};
 
 use crate::ir::{Ability, Datatype, DatatypeKind, Field, NormalizedPackage, TypeName, TypeRef};
 
-use super::{builtins, idents, RenderOptions};
+use super::{builtins, idents, ExternalType, RenderOptions};
 
 pub(crate) fn render_datatype(
     dt: &Datatype,
@@ -399,6 +399,9 @@ fn render_type_ref(
 
             let is_local = is_local_type(type_name, pkg);
             if !is_local {
+                if let Some(external) = opts.external_types.get(type_name) {
+                    return render_external_type(external, &args);
+                }
                 // Keep generation deterministic: unknown external types must be supplied by the
                 // consumer (e.g. another generated package crate).
                 let msg = format!(
@@ -475,6 +478,9 @@ fn render_type_ref_root(
 
             let is_local = is_local_type(type_name, pkg);
             if !is_local {
+                if let Some(external) = opts.external_types.get(type_name) {
+                    return render_external_type(external, &args);
+                }
                 let msg = format!(
                     "sui-move-codegen: unknown external type `{}`; generate bindings for that package too",
                     display_type_name(type_name)
@@ -501,6 +507,26 @@ fn render_type_ref_root(
             let ident = format_ident!("T{idx}");
             quote! { #ident }
         }
+    }
+}
+
+fn render_external_type(external: &ExternalType, args: &[TokenStream]) -> TokenStream {
+    let path = match syn::parse_str::<syn::Path>(&external.rust_path) {
+        Ok(path) => quote! { #path },
+        Err(_) => {
+            let msg = format!(
+                "sui-move-codegen: invalid external Rust type path `{}`",
+                external.rust_path
+            );
+            let msg_lit = syn::LitStr::new(&msg, proc_macro2::Span::call_site());
+            return quote! { compile_error!(#msg_lit) };
+        }
+    };
+
+    if args.is_empty() {
+        path
+    } else {
+        quote! { #path<#(#args),*> }
     }
 }
 

@@ -102,7 +102,7 @@ impl Parse for MoveStructArgs {
                         let ty: syn::Type = syn::parse_str(&s.value()).map_err(|_| {
                             syn::Error::new(
                                 s.span(),
-                                "uid_type must be a valid Rust type path, e.g., \"sui_move::types::UID\"",
+                                "uid_type must be a valid Rust type path, e.g., \"crate::object::UID\"",
                             )
                         })?;
                         args.uid_type = Some(ty);

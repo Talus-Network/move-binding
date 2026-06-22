@@ -1,8 +1,21 @@
 #![cfg(feature = "derive")]
 
 use std::str::FromStr;
+
 use sui_move::prelude::*;
-use sui_move::{containers::MoveOption, Copyable, MoveInstance, Storable};
+use sui_move::{Copyable, MoveInstance, Storable};
+
+mod object {
+    #[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, store")]
+    pub struct ID {
+        pub bytes: sui_move::prelude::Address,
+    }
+
+    #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+    pub struct UID {
+        pub id: ID,
+    }
+}
 
 #[sui_move::move_module(address = "0x1", name = "vault")]
 mod vault {
@@ -11,19 +24,24 @@ mod vault {
         module = "vault",
         abilities = "key, store",
         phantoms = "T",
-        uid_type = "sui_move::types::UID"
+        uid_type = "crate::object::UID"
     )]
     pub struct Vault<T: sui_move::HasCopy + sui_move::HasStore> {
-        pub id: sui_move::types::UID,
+        pub id: crate::object::UID,
         pub balance: Vec<T>,
     }
 }
 
 #[sui_move::move_module(address = "0x1", name = "wrapper")]
 mod wrapper {
-    #[sui_move::move_struct(address = "0x1", module = "wrapper", abilities = "key, store")]
+    #[sui_move::move_struct(
+        address = "0x1",
+        module = "wrapper",
+        abilities = "key, store",
+        uid_type = "crate::object::UID"
+    )]
     pub struct VaultWrapper {
-        pub id: sui_move::types::UID,
+        pub id: crate::object::UID,
         pub inner: crate::vault::Vault<u64>,
     }
 }
@@ -45,16 +63,26 @@ mod bounded {
 fn type_tag_matches_move_definition() {
     let tag = vault::Vault::<u64>::type_tag_static();
     match tag {
-        sui_sdk_types::TypeTag::Struct(inner) => {
-            let expected_addr = sui_sdk_types::Address::from_str("0x1").unwrap();
+        TypeTag::Struct(inner) => {
+            let expected_addr = Address::from_str("0x1").unwrap();
             assert_eq!(*inner.address(), expected_addr);
             assert_eq!(inner.module().to_string(), "vault");
             assert_eq!(inner.name().to_string(), "Vault");
             assert_eq!(inner.type_params().len(), 1);
-            assert!(matches!(
-                inner.type_params()[0],
-                sui_sdk_types::TypeTag::U64
-            ));
+            assert!(matches!(inner.type_params()[0], TypeTag::U64));
+        }
+        _ => panic!("expected struct type tag"),
+    }
+}
+
+#[test]
+fn local_uid_type_matches_framework_identity_without_core_exports() {
+    let tag = object::UID::type_tag_static();
+    match tag {
+        TypeTag::Struct(inner) => {
+            assert_eq!(*inner.address(), Address::from_str("0x2").unwrap());
+            assert_eq!(inner.module().to_string(), "object");
+            assert_eq!(inner.name().to_string(), "UID");
         }
         _ => panic!("expected struct type tag"),
     }
@@ -63,17 +91,9 @@ fn type_tag_matches_move_definition() {
 #[test]
 fn nested_structs_are_supported() {
     let wrapper = wrapper::VaultWrapper {
-        id: sui_move::types::UID {
-            id: sui_move::types::ID {
-                bytes: Address::new([0u8; 32]),
-            },
-        },
+        id: uid_with_byte(0),
         inner: vault::Vault::<u64> {
-            id: sui_move::types::UID {
-                id: sui_move::types::ID {
-                    bytes: Address::new([42u8; 32]),
-                },
-            },
+            id: uid_with_byte(42),
             balance: vec![9, 8],
             phantom_t: std::marker::PhantomData,
         },
@@ -85,7 +105,7 @@ fn nested_structs_are_supported() {
     assert_eq!(decoded.inner.balance, vec![9, 8]);
 
     match wrapper::VaultWrapper::type_tag_static() {
-        sui_sdk_types::TypeTag::Struct(tag) => {
+        TypeTag::Struct(tag) => {
             assert_eq!(tag.module().to_string(), "wrapper");
             assert_eq!(tag.name().to_string(), "VaultWrapper");
         }
@@ -96,11 +116,7 @@ fn nested_structs_are_supported() {
 #[test]
 fn tag_verification_and_bcs_roundtrip() {
     let value = vault::Vault::<u64> {
-        id: sui_move::types::UID {
-            id: sui_move::types::ID {
-                bytes: Address::new([7u8; 32]),
-            },
-        },
+        id: uid_with_byte(7),
         balance: vec![1, 2, 3],
         phantom_t: std::marker::PhantomData,
     };
@@ -114,8 +130,7 @@ fn tag_verification_and_bcs_roundtrip() {
     assert_eq!(inst.value.id.id.bytes.as_bytes()[0], 7);
     assert_eq!(inst.value.balance, vec![1, 2, 3]);
 
-    let err = MoveInstance::<vault::Vault<u64>>::from_raw_type(sui_sdk_types::TypeTag::U8, &bytes)
-        .unwrap_err();
+    let err = MoveInstance::<vault::Vault<u64>>::from_raw_type(TypeTag::U8, &bytes).unwrap_err();
     assert!(matches!(err, sui_move::DecodeError::TypeTagMismatch { .. }));
 }
 
@@ -130,29 +145,17 @@ fn type_abilities_are_respected() {
     require_copy(&boxed.value);
 
     let nested = vault::Vault {
-        id: sui_move::types::UID {
-            id: sui_move::types::ID {
-                bytes: Address::new([9u8; 32]),
-            },
-        },
+        id: uid_with_byte(9),
         balance: vec![bounded::Boxed::<u64> { value: 7 }],
         phantom_t: std::marker::PhantomData,
     };
     assert_eq!(nested.balance[0].value, 7);
 }
 
-#[test]
-fn move_option_and_containers_have_correct_tags() {
-    let opt = MoveOption::<u64> { vec: vec![5] };
-    let bytes = opt.to_bcs().unwrap();
-    let decoded = MoveOption::<u64>::from_bcs(&bytes).unwrap();
-    assert_eq!(decoded.vec, vec![5]);
-
-    match MoveOption::<u64>::type_tag_static() {
-        sui_sdk_types::TypeTag::Struct(tag) => {
-            assert_eq!(tag.module().to_string(), "option");
-            assert_eq!(tag.name().to_string(), "Option");
-        }
-        _ => panic!("expected struct tag"),
+fn uid_with_byte(byte: u8) -> object::UID {
+    object::UID {
+        id: object::ID {
+            bytes: Address::new([byte; 32]),
+        },
     }
 }

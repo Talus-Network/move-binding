@@ -73,7 +73,7 @@ Execution and checkpoint inclusion are distinct:
 - a transaction can be **executed** (effects exist),
 - later it can be **checkpointed** (indexes are updated; “read-your-writes” on that node).
 
-RPC calls may time out waiting for checkpoint inclusion even though execution succeeded. A correct
+gRPC calls may time out waiting for checkpoint inclusion even though execution succeeded. A correct
 client abstraction must preserve recovery information (digest/effects when available) and represent
 finality explicitly rather than as a boolean.
 

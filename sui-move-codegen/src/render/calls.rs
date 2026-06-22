@@ -167,6 +167,9 @@ fn is_object_type(
             if let Some(builtin) = builtins::map_builtin(type_name, opts.use_aliases) {
                 return builtin.is_key;
             }
+            if let Some(external) = opts.external_types.get(type_name) {
+                return external.is_key;
+            }
             pkg.modules
                 .get(&type_name.module)
                 .and_then(|m| {

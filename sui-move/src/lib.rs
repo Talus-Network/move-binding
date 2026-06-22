@@ -12,14 +12,12 @@ pub mod prelude {
     //! Convenient imports for working with this crate.
     //!
     //! Intended for end-user code and examples.
-    pub use crate::{
-        containers::DynamicField, containers::DynamicObjectField,
-        containers::DynamicObjectFieldWrapper, containers::MoveOption, containers::Table,
-        types::ID, types::UID, Copyable, Droppable, HasCopy, HasDrop, HasKey, HasStore,
-        MoveInstance, MoveStruct, MoveType, Storable,
-    };
     #[cfg(feature = "derive")]
     pub use crate::{move_module, move_struct};
+    pub use crate::{
+        Copyable, Droppable, HasCopy, HasDrop, HasKey, HasStore, MoveInstance, MoveStruct,
+        MoveType, Storable,
+    };
     pub use sui_sdk_types::{Address, Identifier, StructTag, TypeTag};
 }
 
@@ -30,12 +28,8 @@ pub mod __private {
 }
 
 mod builtins;
-pub mod containers;
 pub mod decode;
-pub mod primitives;
-pub mod types;
 pub use decode::{decode_copyable, decode_keyed, decode_storable};
-pub use primitives::*;
 
 /// A Rust type that corresponds to a Move type.
 ///
@@ -82,14 +76,6 @@ pub trait MoveType: Serialize + for<'de> Deserialize<'de> + fmt::Debug + Partial
 /// Move structs have both a [`TypeTag`](sui_sdk_types::TypeTag) and a
 /// [`StructTag`](sui_sdk_types::StructTag).
 ///
-/// # Example
-/// ```
-/// use sui_move::prelude::*;
-///
-/// let tag = sui_move::types::UID::struct_tag_static();
-/// assert_eq!(tag.module().to_string(), "object");
-/// assert_eq!(tag.name().to_string(), "UID");
-/// ```
 pub trait MoveStruct: MoveType {
     /// Construct the static struct tag (including type arguments).
     fn struct_tag_static() -> sui_sdk_types::StructTag;

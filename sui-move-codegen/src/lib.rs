@@ -13,12 +13,15 @@ pub mod render;
 
 pub use crate::source::fetch_package;
 
+/// Sui gRPC client used by package metadata fetching.
+pub type GrpcClient = sui_rpc::Client;
+
 /// Errors from sourcing or normalizing package metadata.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// RPC request failed.
-    #[error("rpc: {0}")]
-    Rpc(String),
+    /// gRPC request failed.
+    #[error("grpc: {0}")]
+    Grpc(String),
 
     /// Package missing from response.
     #[error("package missing from response")]

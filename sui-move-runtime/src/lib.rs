@@ -26,7 +26,7 @@ use sui_sdk_types::{Address, Mutability, ProgrammableTransaction, TransactionEff
 /// This is a small umbrella enum that preserves the main failure boundary:
 /// - building a PTB (`Build`)
 /// - submitting/waiting (`Tx`)
-/// - fetching objects for handles (`Rpc`)
+/// - fetching objects for handles over Sui gRPC (`Grpc`)
 /// - simulation/dev-inspection (`Simulate`)
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -38,9 +38,9 @@ pub enum Error {
     #[error(transparent)]
     Tx(#[from] tx::TxError),
 
-    /// Fetching data from RPC failed.
+    /// Fetching data from Sui gRPC failed.
     #[error(transparent)]
-    Rpc(#[from] tx::RpcError),
+    Grpc(#[from] tx::GrpcError),
 
     /// Simulating or dev-inspecting failed.
     #[error(transparent)]
@@ -67,12 +67,15 @@ pub enum Error {
         object_id: Address,
         /// Expected kind (for the API used).
         expected: &'static str,
-        /// Actual kind from RPC.
+        /// Actual kind from gRPC.
         actual: &'static str,
     },
 }
 
-/// Long-lived runtime owning RPC + signer + handle cursor.
+/// Sui gRPC client used by the runtime.
+pub type GrpcClient = sui_rpc::Client;
+
+/// Long-lived runtime owning a Sui gRPC client + signer + handle cursor.
 ///
 /// This is the entry point for the Read → Tx → Commit mental model:
 /// - [`Runtime::read`] for fetching/constructing typed handles
@@ -84,7 +87,7 @@ pub enum Error {
 /// runtime’s cursor (your local frontier) by `object_id`. Clones of the same handle share the same
 /// internal cell, so they all see updates.
 ///
-/// After [`Tx::commit`], the runtime decodes `TransactionEffects` from RPC, derives an
+/// After [`Tx::commit`], the runtime decodes `TransactionEffects` from gRPC, derives an
 /// effects-based patch, and applies it to the cursor, updating any live handle cells whose object
 /// id appears in the effects.
 ///
@@ -107,13 +110,13 @@ pub enum Error {
 /// #     }
 /// # }
 ///
-/// let client = sui_rpc::Client::new(sui_rpc::Client::TESTNET_FULLNODE).unwrap();
+/// let client = GrpcClient::new(GrpcClient::TESTNET_FULLNODE).unwrap();
 /// let signer = DummySigner;
 /// let mut rt = Runtime::new(client, signer);
 /// # let _ = &mut rt;
 /// ```
 pub struct Runtime<S> {
-    client: sui_rpc::Client,
+    client: GrpcClient,
     signer: S,
     cursor: handles::Cursor,
     wait_timeout: Duration,
@@ -121,8 +124,8 @@ pub struct Runtime<S> {
 }
 
 impl<S: SuiSigner> Runtime<S> {
-    /// Create a runtime from an RPC client and a signer.
-    pub fn new(client: sui_rpc::Client, signer: S) -> Self {
+    /// Create a runtime from a Sui gRPC client and a signer.
+    pub fn new(client: GrpcClient, signer: S) -> Self {
         Self {
             client,
             signer,
@@ -150,9 +153,9 @@ impl<S: SuiSigner> Runtime<S> {
     ///
     /// This is the recovery escape hatch for cases where you have a transaction digest but do not
     /// have effects locally (for example, a receipt that was persisted without `effects`, or
-    /// a receipt returned by an RPC node that did not include `effects.bcs`).
+    /// a receipt returned by a gRPC node that did not include `effects.bcs`).
     ///
-    /// If the transaction effects are returned by RPC, the runtime derives an effects patch and
+    /// If the transaction effects are returned by gRPC, the runtime derives an effects patch and
     /// applies it to its cursor, updating any matching runtime-owned handles.
     pub async fn sync_transaction(
         &mut self,
@@ -203,15 +206,15 @@ impl<S: SuiSigner> Runtime<S> {
 
 /// Read view: read/fetch helpers and handle construction.
 ///
-/// This view is intentionally read-only with respect to the chain: it fetches data from RPC and
+/// This view is intentionally read-only with respect to the chain: it fetches data from gRPC and
 /// constructs typed handles, but it does not submit transactions.
 pub struct Read<'a, S> {
     rt: &'a mut Runtime<S>,
 }
 
 impl<'a, S: SuiSigner> Read<'a, S> {
-    /// Mutable access to the underlying RPC client (escape hatch).
-    pub fn client_mut(&mut self) -> &mut sui_rpc::Client {
+    /// Mutable access to the underlying Sui gRPC client (escape hatch).
+    pub fn grpc_client_mut(&mut self) -> &mut GrpcClient {
         &mut self.rt.client
     }
 
@@ -230,13 +233,13 @@ impl<'a, S: SuiSigner> Read<'a, S> {
                     .intern_untyped(fetched.reference, fetched.owner);
                 Ok(())
             }
-            Err(err @ tx::RpcError::Missing(_)) => {
+            Err(err @ tx::GrpcError::Missing(_)) => {
                 self.rt
                     .cursor
                     .tombstone(object_id, TombstoneReason::NotExist);
-                Err(Error::Rpc(err))
+                Err(Error::Grpc(err))
             }
-            Err(err) => Err(Error::Rpc(err)),
+            Err(err) => Err(Error::Grpc(err)),
         }
     }
 
@@ -281,13 +284,13 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         let fetched =
             match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
                 Ok(fetched) => fetched,
-                Err(err @ tx::RpcError::Missing(_)) => {
+                Err(err @ tx::GrpcError::Missing(_)) => {
                     self.rt
                         .cursor
                         .tombstone(object_id, TombstoneReason::NotExist);
-                    return Err(Error::Rpc(err));
+                    return Err(Error::Grpc(err));
                 }
-                Err(err) => return Err(Error::Rpc(err)),
+                Err(err) => return Err(Error::Grpc(err)),
             };
 
         let kind = tx::classify_owner(&fetched.owner);
@@ -322,13 +325,13 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         let fetched =
             match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
                 Ok(fetched) => fetched,
-                Err(err @ tx::RpcError::Missing(_)) => {
+                Err(err @ tx::GrpcError::Missing(_)) => {
                     self.rt
                         .cursor
                         .tombstone(object_id, TombstoneReason::NotExist);
-                    return Err(Error::Rpc(err));
+                    return Err(Error::Grpc(err));
                 }
-                Err(err) => return Err(Error::Rpc(err)),
+                Err(err) => return Err(Error::Grpc(err)),
             };
 
         let obj = self
@@ -352,13 +355,13 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         let fetched =
             match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
                 Ok(fetched) => fetched,
-                Err(err @ tx::RpcError::Missing(_)) => {
+                Err(err @ tx::GrpcError::Missing(_)) => {
                     self.rt
                         .cursor
                         .tombstone(object_id, TombstoneReason::NotExist);
-                    return Err(Error::Rpc(err));
+                    return Err(Error::Grpc(err));
                 }
-                Err(err) => return Err(Error::Rpc(err)),
+                Err(err) => return Err(Error::Grpc(err)),
             };
 
         let obj = self
@@ -385,13 +388,13 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         let fetched =
             match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
                 Ok(fetched) => fetched,
-                Err(err @ tx::RpcError::Missing(_)) => {
+                Err(err @ tx::GrpcError::Missing(_)) => {
                     self.rt
                         .cursor
                         .tombstone(object_id, TombstoneReason::NotExist);
-                    return Err(Error::Rpc(err));
+                    return Err(Error::Grpc(err));
                 }
-                Err(err) => return Err(Error::Rpc(err)),
+                Err(err) => return Err(Error::Grpc(err)),
             };
 
         self.rt
@@ -418,13 +421,13 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         let fetched =
             match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
                 Ok(fetched) => fetched,
-                Err(err @ tx::RpcError::Missing(_)) => {
+                Err(err @ tx::GrpcError::Missing(_)) => {
                     self.rt
                         .cursor
                         .tombstone(object_id, TombstoneReason::NotExist);
-                    return Err(Error::Rpc(err));
+                    return Err(Error::Grpc(err));
                 }
-                Err(err) => return Err(Error::Rpc(err)),
+                Err(err) => return Err(Error::Grpc(err)),
             };
 
         self.rt
@@ -452,13 +455,13 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         let fetched =
             match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
                 Ok(fetched) => fetched,
-                Err(err @ tx::RpcError::Missing(_)) => {
+                Err(err @ tx::GrpcError::Missing(_)) => {
                     self.rt
                         .cursor
                         .tombstone(object_id, TombstoneReason::NotExist);
-                    return Err(Error::Rpc(err));
+                    return Err(Error::Grpc(err));
                 }
-                Err(err) => return Err(Error::Rpc(err)),
+                Err(err) => return Err(Error::Grpc(err)),
             };
         Ok(self
             .rt
@@ -477,13 +480,13 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         let fetched =
             match tx::fetch_object_reference_and_owner(&mut self.rt.client, object_id).await {
                 Ok(fetched) => fetched,
-                Err(err @ tx::RpcError::Missing(_)) => {
+                Err(err @ tx::GrpcError::Missing(_)) => {
                     self.rt
                         .cursor
                         .tombstone(object_id, TombstoneReason::NotExist);
-                    return Err(Error::Rpc(err));
+                    return Err(Error::Grpc(err));
                 }
-                Err(err) => return Err(Error::Rpc(err)),
+                Err(err) => return Err(Error::Grpc(err)),
             };
 
         let kind = tx::classify_owner(&fetched.owner);
@@ -766,8 +769,8 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
 pub mod prelude {
     pub use crate::{
         BcsValue, CheckpointWaitOutcome, CommandOutputs, CursorSnapshot, EnsureSuccessError, Error,
-        Finality, InspectOptions, InspectReceipt, Object, ObservedFinality, Read, Receipt,
-        ReceivingObject, Runtime, SharedObject, SimulateOptions, SimulationReceipt,
+        Finality, GrpcClient, InspectOptions, InspectReceipt, Object, ObservedFinality, Read,
+        Receipt, ReceivingObject, Runtime, SharedObject, SimulateOptions, SimulationReceipt,
         TombstoneReason, Tx, TxOptions,
     };
     pub use sui_move_call::prelude::*;

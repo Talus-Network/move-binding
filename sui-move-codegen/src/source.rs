@@ -9,7 +9,7 @@ use crate::ir::{
     Ability, Datatype, DatatypeKind, Field, Function, FunctionParam, NormalizedModule,
     NormalizedPackage, TypeName, TypeParameter, TypeRef, Variant, Visibility,
 };
-use crate::Error;
+use crate::{Error, GrpcClient};
 
 /// Fetch a Move package over gRPC and normalize it into [`NormalizedPackage`].
 ///
@@ -20,12 +20,11 @@ use crate::Error;
 ///
 /// # Example
 /// ```rust,no_run
-/// use sui_move_codegen::fetch_package;
-/// use sui_rpc::Client;
+/// use sui_move_codegen::{fetch_package, GrpcClient};
 /// use sui_sdk_types::Address;
 ///
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut client = Client::new(Client::MAINNET_FULLNODE)?;
+/// let mut client = GrpcClient::new(GrpcClient::MAINNET_FULLNODE)?;
 /// let package_id: Address = "0x2".parse()?;
 ///
 /// let pkg = fetch_package(&mut client, package_id).await?;
@@ -35,14 +34,14 @@ use crate::Error;
 /// # }
 /// ```
 pub async fn fetch_package(
-    client: &mut sui_rpc::Client,
+    client: &mut GrpcClient,
     package_id: Address,
 ) -> Result<NormalizedPackage, Error> {
     let mut package_client = client.package_client();
     let resp = package_client
         .get_package(proto::GetPackageRequest::new(&package_id))
         .await
-        .map_err(|e| Error::Rpc(e.to_string()))?
+        .map_err(|e| Error::Grpc(e.to_string()))?
         .into_inner();
 
     let package = resp.package.ok_or(Error::MissingPackage)?;

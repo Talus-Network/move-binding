@@ -32,7 +32,12 @@ pub(crate) fn has_phantom_attr(attrs: &[Attribute]) -> bool {
     })
 }
 
-/// Whether a field is the `id: UID` field used for `key` objects.
+/// Whether a field is the package-defined `id: UID` field required by `key` objects.
+///
+/// `UID` is intentionally recognized structurally, by field name and final path segment, because
+/// the framework declaration is not a core `sui-move` type. Generated framework bindings and local
+/// package fixtures should therefore satisfy the default rule without coupling this derive crate to a
+/// handwritten core UID mirror.
 pub(crate) fn is_uid_field(field: &Field, uid_override: Option<&syn::Type>) -> bool {
     let has_id_name = field.ident.as_ref().map(|i| i == "id").unwrap_or(false);
     if !has_id_name {
