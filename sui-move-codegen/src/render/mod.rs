@@ -312,6 +312,17 @@ mod tests {
     }
 
     #[test]
+    fn generated_bindings_use_scoped_package_for_calls_and_type_tags() {
+        let code = render_package(&demo_pkg(), &RenderOptions::default());
+
+        assert!(code.contains("thread_local!"));
+        assert!(code.contains("pub fn package() -> sui_move::prelude::Address"));
+        assert!(code.contains("pub fn with_package<R>"));
+        assert!(code.contains("CallSpec::new(package(), \"m\", \"mutate\")"));
+        assert!(code.contains("address_fn = \"super::package\""));
+    }
+
+    #[test]
     fn renders_structs_with_sui_move_move_struct_attribute() {
         let opts = RenderOptions {
             use_aliases: false,

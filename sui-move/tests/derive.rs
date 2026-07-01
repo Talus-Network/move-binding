@@ -59,6 +59,26 @@ mod bounded {
     }
 }
 
+mod dynamic_address {
+    use std::str::FromStr;
+
+    use sui_move::prelude::Address;
+
+    pub fn package() -> Address {
+        Address::from_str("0x9").unwrap()
+    }
+
+    #[sui_move::move_struct(
+        address = "0x1",
+        address_fn = "crate::dynamic_address::package",
+        module = "dynamic_address",
+        abilities = "copy, drop, store"
+    )]
+    pub struct Value {
+        pub value: u64,
+    }
+}
+
 #[test]
 fn type_tag_matches_move_definition() {
     let tag = vault::Vault::<u64>::type_tag_static();
@@ -70,6 +90,19 @@ fn type_tag_matches_move_definition() {
             assert_eq!(inner.name().to_string(), "Vault");
             assert_eq!(inner.type_params().len(), 1);
             assert!(matches!(inner.type_params()[0], TypeTag::U64));
+        }
+        _ => panic!("expected struct type tag"),
+    }
+}
+
+#[test]
+fn address_fn_overrides_literal_address_for_type_tags() {
+    let tag = dynamic_address::Value::type_tag_static();
+    match tag {
+        TypeTag::Struct(inner) => {
+            assert_eq!(*inner.address(), Address::from_str("0x9").unwrap());
+            assert_eq!(inner.module().to_string(), "dynamic_address");
+            assert_eq!(inner.name().to_string(), "Value");
         }
         _ => panic!("expected struct type tag"),
     }

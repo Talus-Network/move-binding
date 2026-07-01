@@ -47,6 +47,8 @@ pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// # Arguments
 /// - `address = "0x..."` (required): Move address
+/// - `address_fn = "path::to::fn"` (optional): Rust function returning the Move address to use
+///   when building `StructTag`s; `address` remains the default/documented address
 /// - `module = "..."` (required): Move module name
 /// - `name = "..."` (optional): override Move struct name (defaults to Rust name)
 /// - `abilities = "key, store, copy, drop"` (optional): comma-separated Move abilities
@@ -123,12 +125,19 @@ mod tests {
     fn parse_args() {
         let args: MoveStructArgs = syn::parse_quote!(
             address = "0x1",
+            address_fn = "crate::package",
             module = "vault",
             abilities = "key, store",
             phantoms = "T",
             type_abilities = "T: store, copy"
         );
         assert_eq!(args.address.as_deref(), Some("0x1"));
+        assert_eq!(
+            args.address_fn
+                .as_ref()
+                .map(|path| quote::ToTokens::to_token_stream(path).to_string()),
+            Some("crate :: package".to_string())
+        );
         assert_eq!(args.module.as_deref(), Some("vault"));
         assert_eq!(args.name, None);
         assert_eq!(args.abilities, vec!["key".to_string(), "store".to_string()]);

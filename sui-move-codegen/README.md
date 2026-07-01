@@ -40,7 +40,8 @@ needing network access.
 
 Given a `NormalizedPackage` (either fetched from gRPC or loaded from JSON), this crate can render:
 
-- A `pub const PACKAGE: Address` (the on-chain package id)
+- A `pub const PACKAGE: Address` defaulting to the package id from metadata
+- `package()` / `with_package(...)` helpers for scoped package-id overrides
 - One Rust module per Move module (or a flat layout via `RenderOptions::flatten`)
 - Move datatypes as Rust types (structs use `#[sui_move::move_struct]` via `sui-move`’s `derive`
   feature)
@@ -51,6 +52,24 @@ Given a `NormalizedPackage` (either fetched from gRPC or loaded from JSON), this
 Those generated call builders are designed to be used directly in higher layers:
 - `sui-move-ptb` can consume `CallSpec` to build a `ProgrammableTransaction`
 - `sui-move-runtime` can consume `CallSpec` via its tx builder (or `sui_move_runtime::tx!`)
+
+Use `with_package` when the same generated bindings should target a different deployment with the
+same Move layout:
+
+```rust
+# use sui_sdk_types::Address;
+# mod bindings {
+#     pub const PACKAGE: sui_sdk_types::Address = sui_sdk_types::Address::ZERO;
+#     pub fn with_package<R>(_package: sui_sdk_types::Address, f: impl FnOnce() -> R) -> R { f() }
+#     pub mod m {
+#         pub fn f(_arg0: u64) {}
+#     }
+# }
+# let localnet_package = Address::ZERO;
+bindings::with_package(localnet_package, || {
+    bindings::m::f(10);
+});
+```
 
 ## Example: render from an in-memory IR
 

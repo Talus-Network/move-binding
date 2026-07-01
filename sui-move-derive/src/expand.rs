@@ -203,9 +203,15 @@ pub(crate) fn expand_move_struct(
         })
         .collect::<Vec<_>>();
 
+    let address_expr = if let Some(address_fn) = &args.address_fn {
+        quote! { #address_fn() }
+    } else {
+        quote! { ::sui_move::parse_address(#address).expect("invalid address literal") }
+    };
+
     let struct_tag_builder = quote! {
         ::sui_move::__private::sui_sdk_types::StructTag::new(
-            ::sui_move::parse_address(#address).expect("invalid address literal"),
+            #address_expr,
             ::sui_move::parse_identifier(#module_name).expect("invalid module"),
             ::sui_move::parse_identifier(#struct_name).expect("invalid struct name"),
             vec![#(#ty_params_for_tag),*],

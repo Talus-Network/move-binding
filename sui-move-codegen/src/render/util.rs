@@ -15,6 +15,7 @@ pub(crate) fn render_package_tokens(pkg: &NormalizedPackage, opts: &RenderOption
     };
 
     let package_const = package_const_tokens(pkg, opts);
+    let package_scope = package_scope_tokens(opts);
 
     let mut modules = Vec::new();
     for module in pkg.modules.values() {
@@ -44,6 +45,7 @@ pub(crate) fn render_package_tokens(pkg: &NormalizedPackage, opts: &RenderOption
     quote! {
         #root_aliases
         #package_const
+        #package_scope
         #(#modules)*
         #tx_ext
         #reexports
@@ -61,6 +63,7 @@ pub(crate) fn render_split_mod_rs_tokens(
     };
 
     let package_const = package_const_tokens(pkg, opts);
+    let package_scope = package_scope_tokens(opts);
 
     let module_decls = pkg.modules.values().map(|module| {
         let module_ident = idents::ident(&module.name);
@@ -90,6 +93,7 @@ pub(crate) fn render_split_mod_rs_tokens(
     quote! {
         #root_aliases
         #package_const
+        #package_scope
         #(#module_decls)*
         #tx_ext
         #reexports
@@ -118,7 +122,7 @@ pub(crate) fn render_module_file(
 
     quote! {
         #aliases
-        use super::PACKAGE;
+        use super::package;
         #(#items)*
     }
 }
@@ -150,7 +154,7 @@ pub(crate) fn render_module(
         quote! {
             pub mod #module_ident {
                 #aliases
-                use super::PACKAGE;
+                use super::package;
                 #(#items)*
             }
         }
@@ -164,6 +168,45 @@ fn package_const_tokens(pkg: &NormalizedPackage, opts: &RenderOptions) -> TokenS
     quote! {
         /// Package address (the on-chain package object id).
         pub const PACKAGE: #address_ty = #address_ty::from_static(#addr);
+    }
+}
+
+fn package_scope_tokens(opts: &RenderOptions) -> TokenStream {
+    let _ = opts;
+    let address_ty = quote! { sui_move::prelude::Address };
+    quote! {
+        std::thread_local! {
+            static PACKAGE_OVERRIDE: std::cell::Cell<Option<#address_ty>> =
+                std::cell::Cell::new(None);
+        }
+
+        /// Current package address for this generated binding.
+        ///
+        /// Returns the scoped override set by [`with_package`], or [`PACKAGE`] when no override is active.
+        pub fn package() -> #address_ty {
+            PACKAGE_OVERRIDE.with(|slot| slot.get().unwrap_or(PACKAGE))
+        }
+
+        /// Run a closure with this generated binding scoped to `package`.
+        ///
+        /// The previous package override is restored when the closure returns or unwinds.
+        pub fn with_package<R>(package: #address_ty, f: impl FnOnce() -> R) -> R {
+            struct Reset(Option<#address_ty>);
+
+            impl Drop for Reset {
+                fn drop(&mut self) {
+                    PACKAGE_OVERRIDE.with(|slot| slot.set(self.0));
+                }
+            }
+
+            let previous = PACKAGE_OVERRIDE.with(|slot| {
+                let previous = slot.get();
+                slot.set(Some(package));
+                previous
+            });
+            let _reset = Reset(previous);
+            f()
+        }
     }
 }
 

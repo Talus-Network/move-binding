@@ -76,7 +76,7 @@ fn render_function(
         pub fn #fn_ident #fn_generics ( #(#params),* ) -> #sm_call::CallSpec
         #where_clause
         {
-            let mut spec = #sm_call::CallSpec::new(PACKAGE, #module_name, #function_name)
+            let mut spec = #sm_call::CallSpec::new(package(), #module_name, #function_name)
                 .expect("valid Move identifiers");
             #(#push_type_args)*
             #(#pushes)*

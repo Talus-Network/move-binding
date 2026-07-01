@@ -82,6 +82,8 @@ Required arguments:
 
 Optional arguments:
 
+- `address_fn = "path::to::fn"`: Function returning the Move address to use for `StructTag`s.
+  `address` remains the default/documented address.
 - `name = "..."`: Override the Move struct name (defaults to the Rust struct name)
 - `abilities = "key, store, copy, drop"`: Move abilities (comma-separated)
   - `copy` implies `drop`

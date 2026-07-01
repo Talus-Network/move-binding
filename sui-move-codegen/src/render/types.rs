@@ -82,6 +82,11 @@ fn render_struct(
     let abilities_arg = abilities_lit.map(|lit| quote! { abilities = #lit, });
     let phantoms_arg = phantoms_lit.map(|lit| quote! { phantoms = #lit, });
     let type_abilities_arg = type_abilities_lit.map(|lit| quote! { type_abilities = #lit, });
+    let address_fn = if opts.flatten {
+        syn::LitStr::new("package", proc_macro2::Span::call_site())
+    } else {
+        syn::LitStr::new("super::package", proc_macro2::Span::call_site())
+    };
 
     let fields_tokens = fields.iter().map(|f| {
         let ident = idents::ident(&f.name);
@@ -107,6 +112,7 @@ fn render_struct(
         #doc
         #[#macro_path(
             address = #address_lit,
+            address_fn = #address_fn,
             module = #module_lit,
             #name_arg
             #abilities_arg
@@ -264,7 +270,6 @@ fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool) -> TokenStream {
         quote! { sui_move }
     };
 
-    let address = syn::LitStr::new(&dt.type_name.address, proc_macro2::Span::call_site());
     let module = syn::LitStr::new(&dt.type_name.module, proc_macro2::Span::call_site());
     let name = syn::LitStr::new(&dt.type_name.name, proc_macro2::Span::call_site());
 
@@ -275,7 +280,7 @@ fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool) -> TokenStream {
 
     quote! {
         #sm::__private::sui_sdk_types::StructTag::new(
-            #sm::parse_address(#address).expect("invalid address literal"),
+            package(),
             #sm::parse_identifier(#module).expect("invalid module"),
             #sm::parse_identifier(#name).expect("invalid struct name"),
             vec![#(#ty_params_for_tag),*],
