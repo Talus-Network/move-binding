@@ -8,47 +8,16 @@ use crate::ir::{NormalizedModule, NormalizedPackage};
 use super::{calls, idents, tx_ext, types, RenderOptions};
 
 pub(crate) fn render_package_tokens(pkg: &NormalizedPackage, opts: &RenderOptions) -> TokenStream {
-    let root_aliases = if opts.emit_tx_ext && !opts.flatten {
-        aliases(opts)
-    } else {
-        quote! {}
-    };
-
-    let package_const = package_const_tokens(pkg, opts);
-    let package_scope = package_scope_tokens(opts);
-
     let mut modules = Vec::new();
     for module in pkg.modules.values() {
         modules.push(render_module(module, pkg, opts));
     }
 
-    let tx_ext = if opts.emit_tx_ext {
-        tx_ext::render_tx_ext(pkg, opts)
-    } else {
-        quote! {}
-    };
-
-    let reexports = if opts.flatten || !opts.emit_types {
-        quote! {}
-    } else {
-        let mut reexp = Vec::new();
-        for module in pkg.modules.values() {
-            let module_ident = idents::ident(&module.name);
-            for dt in &module.datatypes {
-                let ty_ident = idents::ident(&dt.name);
-                reexp.push(quote! { pub use #module_ident::#ty_ident; });
-            }
-        }
-        quote! { #(#reexp)* }
-    };
+    let root = render_package_root_tokens(pkg, opts, false);
 
     quote! {
-        #root_aliases
-        #package_const
-        #package_scope
+        #root
         #(#modules)*
-        #tx_ext
-        #reexports
     }
 }
 
@@ -56,7 +25,15 @@ pub(crate) fn render_split_mod_rs_tokens(
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
 ) -> TokenStream {
-    let root_aliases = if opts.emit_tx_ext {
+    render_package_root_tokens(pkg, opts, true)
+}
+
+pub(crate) fn render_package_root_tokens(
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+    emit_module_decls: bool,
+) -> TokenStream {
+    let root_aliases = if opts.emit_tx_ext && (emit_module_decls || !opts.flatten) {
         aliases(opts)
     } else {
         quote! {}
@@ -65,12 +42,17 @@ pub(crate) fn render_split_mod_rs_tokens(
     let package_const = package_const_tokens(pkg, opts);
     let package_scope = package_scope_tokens(opts);
 
-    let module_decls = pkg.modules.values().map(|module| {
-        let module_ident = idents::ident(&module.name);
-        quote! { pub mod #module_ident; }
-    });
+    let module_decls = if emit_module_decls {
+        let module_decls = pkg.modules.values().map(|module| {
+            let module_ident = idents::ident(&module.name);
+            quote! { pub mod #module_ident; }
+        });
+        quote! { #(#module_decls)* }
+    } else {
+        quote! {}
+    };
 
-    let reexports = if !opts.emit_types {
+    let reexports = if !opts.emit_types || !opts.emit_reexports {
         quote! {}
     } else {
         let mut out = Vec::new();
@@ -94,7 +76,7 @@ pub(crate) fn render_split_mod_rs_tokens(
         #root_aliases
         #package_const
         #package_scope
-        #(#module_decls)*
+        #module_decls
         #tx_ext
         #reexports
     }
@@ -122,7 +104,7 @@ pub(crate) fn render_module_file(
 
     quote! {
         #aliases
-        use super::package;
+        use super::{call_package, type_package};
         #(#items)*
     }
 }
@@ -154,7 +136,7 @@ pub(crate) fn render_module(
         quote! {
             pub mod #module_ident {
                 #aliases
-                use super::package;
+                use super::{call_package, type_package};
                 #(#items)*
             }
         }
@@ -162,12 +144,19 @@ pub(crate) fn render_module(
 }
 
 fn package_const_tokens(pkg: &NormalizedPackage, opts: &RenderOptions) -> TokenStream {
-    let addr = pkg.storage_id.as_str();
+    let call_addr = pkg.storage_id.as_str();
+    let type_addr = pkg
+        .original_id
+        .as_deref()
+        .unwrap_or(pkg.storage_id.as_str());
     let _ = opts;
     let address_ty = quote! { sui_move::prelude::Address };
     quote! {
-        /// Package address (the on-chain package object id).
-        pub const PACKAGE: #address_ty = #address_ty::from_static(#addr);
+        /// Package address used as the target for generated Move calls.
+        pub const CALL_PACKAGE: #address_ty = #address_ty::from_static(#call_addr);
+
+        /// Package address used for generated Move type identity.
+        pub const TYPE_PACKAGE: #address_ty = #address_ty::from_static(#type_addr);
     }
 }
 
@@ -176,36 +165,80 @@ fn package_scope_tokens(opts: &RenderOptions) -> TokenStream {
     let address_ty = quote! { sui_move::prelude::Address };
     quote! {
         std::thread_local! {
-            static PACKAGE_OVERRIDE: std::cell::Cell<Option<#address_ty>> =
+            static CALL_PACKAGE_OVERRIDE: std::cell::Cell<Option<#address_ty>> =
+                std::cell::Cell::new(None);
+            static TYPE_PACKAGE_OVERRIDE: std::cell::Cell<Option<#address_ty>> =
                 std::cell::Cell::new(None);
         }
 
-        /// Current package address for this generated binding.
+        /// Current call package address for this generated binding.
         ///
-        /// Returns the scoped override set by [`with_package`], or [`PACKAGE`] when no override is active.
-        pub fn package() -> #address_ty {
-            PACKAGE_OVERRIDE.with(|slot| slot.get().unwrap_or(PACKAGE))
+        /// Returns the scoped override set by [`with_call_package`] or [`with_packages`], or
+        /// [`CALL_PACKAGE`] when no override is active.
+        pub fn call_package() -> #address_ty {
+            CALL_PACKAGE_OVERRIDE.with(|slot| slot.get().unwrap_or(CALL_PACKAGE))
         }
 
-        /// Run a closure with this generated binding scoped to `package`.
+        /// Current type package address for this generated binding.
         ///
-        /// The previous package override is restored when the closure returns or unwinds.
-        pub fn with_package<R>(package: #address_ty, f: impl FnOnce() -> R) -> R {
+        /// Returns the scoped override set by [`with_type_package`] or [`with_packages`], or
+        /// [`TYPE_PACKAGE`] when no override is active.
+        pub fn type_package() -> #address_ty {
+            TYPE_PACKAGE_OVERRIDE.with(|slot| slot.get().unwrap_or(TYPE_PACKAGE))
+        }
+
+        /// Run a closure with this generated binding scoped to `package` for Move calls.
+        ///
+        /// The previous call package override is restored when the closure returns or unwinds.
+        pub fn with_call_package<R>(package: #address_ty, f: impl FnOnce() -> R) -> R {
             struct Reset(Option<#address_ty>);
 
             impl Drop for Reset {
                 fn drop(&mut self) {
-                    PACKAGE_OVERRIDE.with(|slot| slot.set(self.0));
+                    CALL_PACKAGE_OVERRIDE.with(|slot| slot.set(self.0));
                 }
             }
 
-            let previous = PACKAGE_OVERRIDE.with(|slot| {
+            let previous = CALL_PACKAGE_OVERRIDE.with(|slot| {
                 let previous = slot.get();
                 slot.set(Some(package));
                 previous
             });
             let _reset = Reset(previous);
             f()
+        }
+
+        /// Run a closure with this generated binding scoped to `package` for Move type identity.
+        ///
+        /// The previous type package override is restored when the closure returns or unwinds.
+        pub fn with_type_package<R>(package: #address_ty, f: impl FnOnce() -> R) -> R {
+            struct Reset(Option<#address_ty>);
+
+            impl Drop for Reset {
+                fn drop(&mut self) {
+                    TYPE_PACKAGE_OVERRIDE.with(|slot| slot.set(self.0));
+                }
+            }
+
+            let previous = TYPE_PACKAGE_OVERRIDE.with(|slot| {
+                let previous = slot.get();
+                slot.set(Some(package));
+                previous
+            });
+            let _reset = Reset(previous);
+            f()
+        }
+
+        /// Run a closure with explicit call and type package scopes.
+        ///
+        /// Use this for upgraded packages where calls target the current package object but type
+        /// tags must retain the original defining package address.
+        pub fn with_packages<R>(
+            call_package: #address_ty,
+            type_package: #address_ty,
+            f: impl FnOnce() -> R,
+        ) -> R {
+            with_call_package(call_package, || with_type_package(type_package, f))
         }
     }
 }

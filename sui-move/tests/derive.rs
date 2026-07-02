@@ -59,6 +59,34 @@ mod bounded {
     }
 }
 
+mod phantom_copy {
+    #[sui_move::move_struct(
+        address = "0x1",
+        module = "phantom_copy",
+        abilities = "copy, drop, store",
+        phantoms = "T"
+    )]
+    pub struct Marker<T> {
+        pub value: u64,
+    }
+}
+
+mod conditional_abilities {
+    #[sui_move::move_struct(address = "0x1", module = "conditional_abilities", abilities = "store")]
+    pub struct StoreOnly {
+        pub value: u64,
+    }
+
+    #[sui_move::move_struct(
+        address = "0x1",
+        module = "conditional_abilities",
+        abilities = "copy, drop, store"
+    )]
+    pub struct OptionLike<T> {
+        pub vec: Vec<T>,
+    }
+}
+
 mod dynamic_address {
     use std::str::FromStr;
 
@@ -170,6 +198,21 @@ fn tag_verification_and_bcs_roundtrip() {
 fn require_store<T: Storable>(_: &T) {}
 fn require_copy<T: Copyable>(_: &T) {}
 
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    sui_move::__private::serde::Serialize,
+    sui_move::__private::serde::Deserialize,
+)]
+struct NonCloneType;
+
+impl MoveType for NonCloneType {
+    fn type_tag_static() -> TypeTag {
+        TypeTag::Bool
+    }
+}
+
 #[test]
 fn type_abilities_are_respected() {
     let boxed = bounded::Boxed::<u64> { value: 5 };
@@ -183,6 +226,40 @@ fn type_abilities_are_respected() {
         phantom_t: std::marker::PhantomData,
     };
     assert_eq!(nested.balance[0].value, 7);
+}
+
+#[test]
+fn phantom_copy_type_parameter_does_not_require_clone() {
+    let marker = phantom_copy::Marker::<NonCloneType> {
+        value: 11,
+        phantom_t: std::marker::PhantomData,
+    };
+
+    let cloned = marker.clone();
+    require_copy(&marker);
+    assert_eq!(cloned.value, 11);
+}
+
+#[test]
+fn ability_marker_impls_use_per_ability_field_bounds() {
+    let wrapped = conditional_abilities::OptionLike {
+        vec: vec![conditional_abilities::StoreOnly { value: 9 }],
+    };
+
+    require_store(&wrapped);
+    assert_eq!(wrapped.vec[0].value, 9);
+}
+
+#[test]
+fn generated_structs_clone_from_move_copy_abilities() {
+    let store_only = conditional_abilities::StoreOnly { value: 3 };
+    let cloned = store_only.clone();
+    assert_eq!(cloned.value, 3);
+
+    let copy_value = dynamic_address::Value { value: 4 };
+    let cloned_copy_value = copy_value.clone();
+    require_copy(&copy_value);
+    assert_eq!(cloned_copy_value.value, 4);
 }
 
 fn uid_with_byte(byte: u8) -> object::UID {

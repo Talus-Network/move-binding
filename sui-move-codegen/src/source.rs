@@ -29,7 +29,7 @@ use crate::{Error, GrpcClient};
 ///
 /// let pkg = fetch_package(&mut client, package_id).await?;
 /// let json = pkg.to_json_string()?;
-/// println!("{json}");
+/// println!("{} bytes", json.len());
 /// # Ok(())
 /// # }
 /// ```

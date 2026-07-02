@@ -6,6 +6,8 @@
 //! Enums are emitted as Rust `enum`s with manual `MoveType` / `MoveStruct` impls. (Move enum
 //! support is still evolving, so this layer keeps the implementation small and explicit.)
 
+use std::collections::BTreeSet;
+
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -18,9 +20,14 @@ pub(crate) fn render_datatype(
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
 ) -> TokenStream {
-    match &dt.kind {
+    let datatype = match &dt.kind {
         DatatypeKind::Struct { fields } => render_struct(dt, fields, pkg, opts),
         DatatypeKind::Enum { variants } => render_enum(dt, variants, pkg, opts),
+    };
+    let helpers = render_canonical_helpers(dt, pkg, opts);
+    quote! {
+        #datatype
+        #helpers
     }
 }
 
@@ -83,9 +90,9 @@ fn render_struct(
     let phantoms_arg = phantoms_lit.map(|lit| quote! { phantoms = #lit, });
     let type_abilities_arg = type_abilities_lit.map(|lit| quote! { type_abilities = #lit, });
     let address_fn = if opts.flatten {
-        syn::LitStr::new("package", proc_macro2::Span::call_site())
+        syn::LitStr::new("type_package", proc_macro2::Span::call_site())
     } else {
-        syn::LitStr::new("super::package", proc_macro2::Span::call_site())
+        syn::LitStr::new("super::type_package", proc_macro2::Span::call_site())
     };
 
     let fields_tokens = fields.iter().map(|f| {
@@ -107,9 +114,15 @@ fn render_struct(
     } else {
         quote! { sui_move::move_struct }
     };
+    let rust_copy_derive = is_rust_copy_datatype(dt, pkg).then(|| {
+        quote! {
+            #[derive(::core::marker::Copy)]
+        }
+    });
 
     quote! {
         #doc
+        #rust_copy_derive
         #[#macro_path(
             address = #address_lit,
             address_fn = #address_fn,
@@ -141,6 +154,7 @@ fn render_enum(
 
     let abilities = abilities_string(&dt.abilities);
     let bounds = type_param_bounds(dt, opts.use_aliases);
+    let rust_copy = is_rust_copy_datatype(dt, pkg);
 
     let sm = if opts.use_aliases {
         quote! { sm }
@@ -150,7 +164,7 @@ fn render_enum(
     let struct_tag_builder = struct_tag_builder_tokens(dt, opts.use_aliases);
     let where_clause = where_clause(&bounds);
 
-    let derives = enum_derives(&dt.abilities, opts.use_aliases);
+    let derives = enum_derives(&dt.abilities, rust_copy, opts.use_aliases);
     let serde_crate_attr = serde_crate_attr();
 
     let variants_tokens = variants.iter().map(|v| {
@@ -263,6 +277,693 @@ fn ability_impls_for_datatype(
     quote! { #(#out)* }
 }
 
+fn render_canonical_helpers(
+    dt: &Datatype,
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+) -> TokenStream {
+    if !matches!(dt.kind, DatatypeKind::Struct { .. }) {
+        return quote! {};
+    }
+
+    let mut helpers = Vec::new();
+    if let Some(helper) = render_struct_constructor_helpers(dt, pkg, opts) {
+        helpers.push(helper);
+    }
+    if is_type(&dt.type_name, "0x1", "ascii", "String") {
+        helpers.push(render_ascii_string_helpers(dt));
+    }
+    if is_type(&dt.type_name, "0x1", "type_name", "TypeName") {
+        helpers.push(render_type_name_helpers(dt, pkg, opts));
+    } else if let Some(helper) = render_ascii_name_wrapper_helpers(dt, pkg, opts) {
+        helpers.push(helper);
+    }
+    if is_type(&dt.type_name, "0x1", "option", "Option") {
+        helpers.push(render_option_helpers(dt, opts));
+    }
+    if is_type(&dt.type_name, "0x2", "object", "ID") {
+        helpers.push(render_object_id_helpers(dt));
+    }
+    if is_type(&dt.type_name, "0x2", "object", "UID") {
+        helpers.push(render_object_uid_helpers(dt));
+    }
+    if is_type(&dt.type_name, "0x2", "table", "Table") {
+        helpers.push(render_table_like_helpers(
+            dt,
+            opts,
+            quote! {
+                Self {
+                    id: super::object::UID::new(id),
+                    size,
+                    phantom_t0: std::marker::PhantomData,
+                    phantom_t1: std::marker::PhantomData,
+                }
+            },
+        ));
+    }
+    if is_type(&dt.type_name, "0x2", "linked_table", "LinkedTable") {
+        helpers.push(render_table_like_helpers(
+            dt,
+            opts,
+            quote! {
+                Self {
+                    id: super::object::UID::new(id),
+                    size,
+                    head: Default::default(),
+                    tail: Default::default(),
+                    phantom_t1: std::marker::PhantomData,
+                }
+            },
+        ));
+    }
+    if is_type(&dt.type_name, "0x2", "object_table", "ObjectTable") {
+        helpers.push(render_id_size_helpers(dt, opts));
+    }
+    if is_type(&dt.type_name, "0x2", "bag", "Bag")
+        || is_type(&dt.type_name, "0x2", "object_bag", "ObjectBag")
+    {
+        helpers.push(render_table_like_helpers(
+            dt,
+            opts,
+            quote! {
+                Self {
+                    id: super::object::UID::new(id),
+                    size,
+                }
+            },
+        ));
+    }
+    if is_type(&dt.type_name, "0x2", "table_vec", "TableVec") {
+        helpers.push(render_table_vec_helpers(dt, opts));
+    }
+    if is_type(&dt.type_name, "0x2", "vec_map", "VecMap") {
+        helpers.push(render_vec_map_helpers(dt, opts));
+    }
+
+    quote! { #(#helpers)* }
+}
+
+fn is_rust_copy_datatype(dt: &Datatype, pkg: &NormalizedPackage) -> bool {
+    rust_copy_type_keys(pkg).contains(&local_type_key(&dt.type_name, pkg))
+}
+
+fn rust_copy_type_keys(pkg: &NormalizedPackage) -> BTreeSet<String> {
+    let datatypes = pkg
+        .modules
+        .values()
+        .flat_map(|module| module.datatypes.iter())
+        .collect::<Vec<_>>();
+    let mut copy_types = BTreeSet::new();
+
+    loop {
+        let mut changed = false;
+        for dt in &datatypes {
+            let key = local_type_key(&dt.type_name, pkg);
+            if copy_types.contains(&key) {
+                continue;
+            }
+            if datatype_has_rust_copy_shape(dt, pkg, &copy_types) {
+                copy_types.insert(key);
+                changed = true;
+            }
+        }
+
+        if !changed {
+            return copy_types;
+        }
+    }
+}
+
+fn datatype_has_rust_copy_shape(
+    dt: &Datatype,
+    pkg: &NormalizedPackage,
+    copy_types: &BTreeSet<String>,
+) -> bool {
+    if !dt.abilities.contains(&Ability::Copy) || !dt.type_parameters.is_empty() {
+        return false;
+    }
+
+    match &dt.kind {
+        DatatypeKind::Struct { fields } => fields
+            .iter()
+            .all(|field| type_has_rust_copy_shape(&field.ty, pkg, copy_types)),
+        DatatypeKind::Enum { variants } => variants.iter().all(|variant| {
+            variant
+                .fields
+                .iter()
+                .all(|field| type_has_rust_copy_shape(&field.ty, pkg, copy_types))
+        }),
+    }
+}
+
+fn type_has_rust_copy_shape(
+    ty: &TypeRef,
+    pkg: &NormalizedPackage,
+    copy_types: &BTreeSet<String>,
+) -> bool {
+    match ty {
+        TypeRef::Address
+        | TypeRef::Bool
+        | TypeRef::U8
+        | TypeRef::U16
+        | TypeRef::U32
+        | TypeRef::U64
+        | TypeRef::U128
+        | TypeRef::U256 => true,
+        TypeRef::Ref { mutable, .. } => !mutable,
+        TypeRef::Datatype {
+            type_name,
+            type_arguments,
+        } => {
+            type_arguments.is_empty()
+                && is_local_type(type_name, pkg)
+                && copy_types.contains(&local_type_key(type_name, pkg))
+        }
+        TypeRef::Vector(_) | TypeRef::TypeParameter(_) => false,
+    }
+}
+
+fn local_type_key(type_name: &TypeName, pkg: &NormalizedPackage) -> String {
+    let address = if is_local_type(type_name, pkg) {
+        normalize_address(&pkg.storage_id)
+    } else {
+        normalize_address(&type_name.address)
+    };
+    format!("{}::{}::{}", address, type_name.module, type_name.name)
+}
+
+fn render_struct_constructor_helpers(
+    dt: &Datatype,
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+) -> Option<TokenStream> {
+    if has_specialized_new_helper(dt, pkg, opts) {
+        return None;
+    }
+
+    let DatatypeKind::Struct { fields } = &dt.kind else {
+        return None;
+    };
+
+    let type_ident = idents::ident(&dt.name);
+    let type_params = type_params_idents(dt.type_parameters.len());
+    let (impl_generics, type_generics) = impl_and_type_generics(&type_params);
+
+    let mut params = Vec::new();
+    let mut initializers = Vec::new();
+    let field_names = fields
+        .iter()
+        .map(|field| field.name.as_str())
+        .collect::<Vec<_>>();
+    for field in fields {
+        let field_ident = idents::ident(&field.name);
+        if field.name.starts_with("phantom_") {
+            initializers.push(quote! { #field_ident: std::marker::PhantomData });
+            continue;
+        }
+
+        let field_ty = render_type_ref(&field.ty, &dt.type_name, pkg, opts);
+        let param_ty = constructor_param_type(&field.ty, field_ty);
+        params.push(quote! { #field_ident: #param_ty });
+        initializers.push(quote! { #field_ident: #field_ident.into() });
+    }
+    for (idx, type_param) in dt.type_parameters.iter().enumerate() {
+        let field_name = format!("phantom_t{idx}");
+        if type_param.is_phantom && !field_names.contains(&field_name.as_str()) {
+            let field_ident = format_ident!("phantom_t{idx}");
+            initializers.push(quote! { #field_ident: std::marker::PhantomData });
+        }
+    }
+
+    Some(quote! {
+        impl #impl_generics #type_ident #type_generics
+        {
+            pub fn new(#(#params),*) -> Self {
+                Self {
+                    #(#initializers),*
+                }
+            }
+        }
+    })
+}
+
+fn constructor_param_type(ty: &TypeRef, rendered: TokenStream) -> TokenStream {
+    match ty {
+        TypeRef::Datatype { .. } | TypeRef::TypeParameter(_) => quote! { impl Into<#rendered> },
+        TypeRef::Address
+        | TypeRef::Bool
+        | TypeRef::U8
+        | TypeRef::U16
+        | TypeRef::U32
+        | TypeRef::U64
+        | TypeRef::U128
+        | TypeRef::U256
+        | TypeRef::Vector(_)
+        | TypeRef::Ref { .. } => rendered,
+    }
+}
+
+fn has_specialized_new_helper(
+    dt: &Datatype,
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+) -> bool {
+    is_type(&dt.type_name, "0x1", "type_name", "TypeName")
+        || ascii_name_field(dt, pkg, opts).is_some()
+        || is_type(&dt.type_name, "0x2", "object", "ID")
+        || is_type(&dt.type_name, "0x2", "object", "UID")
+        || is_type(&dt.type_name, "0x2", "table", "Table")
+        || is_type(&dt.type_name, "0x2", "linked_table", "LinkedTable")
+        || is_type(&dt.type_name, "0x2", "bag", "Bag")
+        || is_type(&dt.type_name, "0x2", "object_bag", "ObjectBag")
+        || is_type(&dt.type_name, "0x2", "table_vec", "TableVec")
+}
+
+fn is_type(type_name: &TypeName, address: &str, module: &str, name: &str) -> bool {
+    normalize_address(&type_name.address) == normalize_address(address)
+        && type_name.module == module
+        && type_name.name == name
+}
+
+fn normalize_address(address: &str) -> String {
+    let trimmed = address.trim_start_matches("0x");
+    let trimmed = trimmed.trim_start_matches('0');
+    if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_ascii_lowercase()
+    }
+}
+
+fn render_ascii_string_helpers(dt: &Datatype) -> TokenStream {
+    let type_ident = idents::ident(&dt.name);
+    quote! {
+        impl #type_ident {
+            pub fn as_str(&self) -> &str {
+                std::str::from_utf8(&self.bytes).expect("generated Move ASCII string must be UTF-8")
+            }
+
+            pub fn into_string(self) -> std::string::String {
+                std::string::String::from_utf8(self.bytes)
+                    .expect("generated Move ASCII string must be UTF-8")
+            }
+        }
+
+        impl From<&str> for #type_ident {
+            fn from(value: &str) -> Self {
+                Self {
+                    bytes: value.as_bytes().to_vec(),
+                }
+            }
+        }
+
+        impl From<std::string::String> for #type_ident {
+            fn from(value: std::string::String) -> Self {
+                Self {
+                    bytes: value.into_bytes(),
+                }
+            }
+        }
+
+        impl From<#type_ident> for std::string::String {
+            fn from(value: #type_ident) -> Self {
+                value.into_string()
+            }
+        }
+
+        impl AsRef<str> for #type_ident {
+            fn as_ref(&self) -> &str {
+                self.as_str()
+            }
+        }
+
+        impl std::fmt::Display for #type_ident {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+    }
+}
+
+fn render_type_name_helpers(
+    dt: &Datatype,
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+) -> TokenStream {
+    let type_ident = idents::ident(&dt.name);
+    let Some((field_ident, field_ty)) = ascii_name_field(dt, pkg, opts) else {
+        return quote! {};
+    };
+
+    quote! {
+        impl #type_ident {
+            pub fn new(name: &str) -> Self {
+                Self {
+                    #field_ident: #field_ty::from(name),
+                }
+            }
+
+            pub fn as_str(&self) -> &str {
+                self.#field_ident.as_str()
+            }
+
+            fn normalize(name: &str) -> std::borrow::Cow<'_, str> {
+                let trimmed = name.trim_start_matches("0x");
+                if trimmed.len() == name.len() {
+                    std::borrow::Cow::Borrowed(name)
+                } else {
+                    std::borrow::Cow::Owned(trimmed.to_string())
+                }
+            }
+
+            pub fn matches_qualified_name(&self, expected: &str) -> bool {
+                Self::normalize(self.as_str()).eq_ignore_ascii_case(&Self::normalize(expected))
+            }
+        }
+
+        impl From<&str> for #type_ident {
+            fn from(name: &str) -> Self {
+                #type_ident::new(name)
+            }
+        }
+
+        impl From<std::string::String> for #type_ident {
+            fn from(name: std::string::String) -> Self {
+                #type_ident {
+                    #field_ident: #field_ty::from(name),
+                }
+            }
+        }
+
+        impl std::fmt::Display for #type_ident {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.#field_ident.fmt(f)
+            }
+        }
+    }
+}
+
+fn render_ascii_name_wrapper_helpers(
+    dt: &Datatype,
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+) -> Option<TokenStream> {
+    let type_ident = idents::ident(&dt.name);
+    let (field_ident, field_ty) = ascii_name_field(dt, pkg, opts)?;
+
+    Some(quote! {
+        impl #type_ident {
+            pub fn new(name: impl Into<#field_ty>) -> Self {
+                Self { #field_ident: name.into() }
+            }
+
+            pub fn as_str(&self) -> &str {
+                self.#field_ident.as_str()
+            }
+        }
+
+        impl From<&str> for #type_ident {
+            fn from(value: &str) -> Self {
+                Self::new(value)
+            }
+        }
+
+        impl From<std::string::String> for #type_ident {
+            fn from(value: std::string::String) -> Self {
+                Self::new(value)
+            }
+        }
+    })
+}
+
+fn ascii_name_field(
+    dt: &Datatype,
+    pkg: &NormalizedPackage,
+    opts: &RenderOptions,
+) -> Option<(syn::Ident, TokenStream)> {
+    let DatatypeKind::Struct { fields } = &dt.kind else {
+        return None;
+    };
+    let [field] = fields.as_slice() else {
+        return None;
+    };
+    if field.name != "name" || !is_ascii_string_ref(&field.ty) {
+        return None;
+    }
+    let field_ident = idents::ident(&field.name);
+    let field_ty = render_type_ref(&field.ty, &dt.type_name, pkg, opts);
+    Some((field_ident, field_ty))
+}
+
+fn is_ascii_string_ref(ty: &TypeRef) -> bool {
+    matches!(
+        ty,
+        TypeRef::Datatype {
+            type_name,
+            type_arguments
+        } if type_arguments.is_empty() && is_type(type_name, "0x1", "ascii", "String")
+    )
+}
+
+fn render_option_helpers(dt: &Datatype, _opts: &RenderOptions) -> TokenStream {
+    let type_ident = idents::ident(&dt.name);
+    let type_params = type_params_idents(dt.type_parameters.len());
+    if type_params.len() != 1 {
+        return quote! {};
+    }
+    let t0 = &type_params[0];
+    let (impl_generics, type_generics) = impl_and_type_generics(&type_params);
+
+    quote! {
+        impl #impl_generics #type_ident #type_generics
+        {
+            pub fn from_option(value: std::option::Option<#t0>) -> Self {
+                Self {
+                    vec: value.into_iter().collect(),
+                }
+            }
+
+            pub fn into_option(self) -> std::option::Option<#t0> {
+                self.vec.into_iter().next()
+            }
+
+            pub fn as_option(&self) -> std::option::Option<&#t0> {
+                self.vec.first()
+            }
+
+            pub fn copied_option(&self) -> std::option::Option<#t0>
+            where
+                #t0: Copy,
+            {
+                self.as_option().copied()
+            }
+
+            pub fn cloned_option(&self) -> std::option::Option<#t0>
+            where
+                #t0: Clone,
+            {
+                self.as_option().cloned()
+            }
+        }
+
+        impl #impl_generics Default for #type_ident #type_generics
+        {
+            fn default() -> Self {
+                Self::from_option(None)
+            }
+        }
+
+        impl #impl_generics From<std::option::Option<#t0>> for #type_ident #type_generics
+        {
+            fn from(value: std::option::Option<#t0>) -> Self {
+                Self::from_option(value)
+            }
+        }
+    }
+}
+
+fn render_object_id_helpers(dt: &Datatype) -> TokenStream {
+    let type_ident = idents::ident(&dt.name);
+    quote! {
+        impl #type_ident {
+            pub fn new(bytes: sui_move::prelude::Address) -> Self {
+                Self { bytes }
+            }
+
+            pub fn address(&self) -> sui_move::prelude::Address {
+                self.bytes
+            }
+        }
+
+        impl From<sui_move::prelude::Address> for #type_ident {
+            fn from(value: sui_move::prelude::Address) -> Self {
+                Self::new(value)
+            }
+        }
+
+        impl From<#type_ident> for sui_move::prelude::Address {
+            fn from(value: #type_ident) -> Self {
+                value.bytes
+            }
+        }
+
+        impl std::fmt::Display for #type_ident {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.bytes.fmt(f)
+            }
+        }
+    }
+}
+
+fn render_object_uid_helpers(dt: &Datatype) -> TokenStream {
+    let type_ident = idents::ident(&dt.name);
+    quote! {
+        impl #type_ident {
+            pub fn new(bytes: sui_move::prelude::Address) -> Self {
+                Self {
+                    id: ID::new(bytes),
+                }
+            }
+
+            pub fn address(&self) -> sui_move::prelude::Address {
+                self.id.bytes
+            }
+        }
+
+        impl From<sui_move::prelude::Address> for #type_ident {
+            fn from(value: sui_move::prelude::Address) -> Self {
+                Self::new(value)
+            }
+        }
+
+        impl From<#type_ident> for sui_move::prelude::Address {
+            fn from(value: #type_ident) -> Self {
+                value.id.bytes
+            }
+        }
+    }
+}
+
+fn render_table_like_helpers(
+    dt: &Datatype,
+    _opts: &RenderOptions,
+    constructor: TokenStream,
+) -> TokenStream {
+    let type_ident = idents::ident(&dt.name);
+    let type_params = type_params_idents(dt.type_parameters.len());
+    let (impl_generics, type_generics) = impl_and_type_generics(&type_params);
+
+    quote! {
+        impl #impl_generics #type_ident #type_generics
+        {
+            pub fn new(id: sui_move::prelude::Address, size: u64) -> Self {
+                #constructor
+            }
+
+            pub fn id(&self) -> sui_move::prelude::Address {
+                self.id.id.bytes
+            }
+
+            pub fn size(&self) -> usize {
+                usize::try_from(self.size).unwrap_or(usize::MAX)
+            }
+
+            pub fn size_u64(&self) -> u64 {
+                self.size
+            }
+        }
+    }
+}
+
+fn render_id_size_helpers(dt: &Datatype, _opts: &RenderOptions) -> TokenStream {
+    let type_ident = idents::ident(&dt.name);
+    let type_params = type_params_idents(dt.type_parameters.len());
+    let (impl_generics, type_generics) = impl_and_type_generics(&type_params);
+
+    quote! {
+        impl #impl_generics #type_ident #type_generics
+        {
+            pub fn id(&self) -> sui_move::prelude::Address {
+                self.id.id.bytes
+            }
+
+            pub fn size(&self) -> usize {
+                usize::try_from(self.size).unwrap_or(usize::MAX)
+            }
+
+            pub fn size_u64(&self) -> u64 {
+                self.size
+            }
+        }
+    }
+}
+
+fn render_table_vec_helpers(dt: &Datatype, _opts: &RenderOptions) -> TokenStream {
+    let type_ident = idents::ident(&dt.name);
+    let type_params = type_params_idents(dt.type_parameters.len());
+    let (impl_generics, type_generics) = impl_and_type_generics(&type_params);
+
+    quote! {
+        impl #impl_generics #type_ident #type_generics
+        {
+            pub fn new(id: sui_move::prelude::Address, size: u64) -> Self {
+                Self {
+                    contents: super::table::Table::new(id, size),
+                    phantom_t0: std::marker::PhantomData,
+                }
+            }
+
+            pub fn id(&self) -> sui_move::prelude::Address {
+                self.contents.id()
+            }
+
+            pub fn size(&self) -> usize {
+                self.contents.size()
+            }
+
+            pub fn size_u64(&self) -> u64 {
+                self.contents.size_u64()
+            }
+        }
+    }
+}
+
+fn render_vec_map_helpers(dt: &Datatype, _opts: &RenderOptions) -> TokenStream {
+    let type_ident = idents::ident(&dt.name);
+    let type_params = type_params_idents(dt.type_parameters.len());
+    if type_params.len() != 2 {
+        return quote! {};
+    }
+    let k = &type_params[0];
+    let v = &type_params[1];
+    let (impl_generics, type_generics) = impl_and_type_generics(&type_params);
+
+    quote! {
+        impl #impl_generics #type_ident #type_generics
+        {
+            pub fn get(&self, key: &#k) -> std::option::Option<&#v>
+            where
+                #k: Eq,
+            {
+                self.contents
+                    .iter()
+                    .find(|entry| &entry.key == key)
+                    .map(|entry| &entry.value)
+            }
+
+            pub fn into_hash_map(self) -> std::collections::HashMap<#k, #v>
+            where
+                #k: Eq + std::hash::Hash,
+            {
+                self.contents
+                    .into_iter()
+                    .map(|entry| (entry.key, entry.value))
+                    .collect()
+            }
+        }
+    }
+}
+
 fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool) -> TokenStream {
     let sm = if use_aliases {
         quote! { sm }
@@ -280,7 +981,7 @@ fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool) -> TokenStream {
 
     quote! {
         #sm::__private::sui_sdk_types::StructTag::new(
-            package(),
+            type_package(),
             #sm::parse_identifier(#module).expect("invalid module"),
             #sm::parse_identifier(#name).expect("invalid struct name"),
             vec![#(#ty_params_for_tag),*],
@@ -288,7 +989,7 @@ fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool) -> TokenStream {
     }
 }
 
-fn enum_derives(abilities: &[Ability], use_aliases: bool) -> TokenStream {
+fn enum_derives(abilities: &[Ability], rust_copy: bool, use_aliases: bool) -> TokenStream {
     let sm = if use_aliases {
         quote! { sm }
     } else {
@@ -296,13 +997,16 @@ fn enum_derives(abilities: &[Ability], use_aliases: bool) -> TokenStream {
     };
 
     let has_copy = abilities.contains(&Ability::Copy);
+    let rust_copy_derive = rust_copy.then(|| quote! { ::core::marker::Copy, });
 
     if has_copy {
         quote! {
+            #rust_copy_derive
             ::core::clone::Clone,
             ::core::fmt::Debug,
             ::core::cmp::PartialEq,
             ::core::cmp::Eq,
+            ::core::hash::Hash,
             #sm::__private::serde::Serialize,
             #sm::__private::serde::Deserialize,
         }
@@ -311,6 +1015,7 @@ fn enum_derives(abilities: &[Ability], use_aliases: bool) -> TokenStream {
             ::core::fmt::Debug,
             ::core::cmp::PartialEq,
             ::core::cmp::Eq,
+            ::core::hash::Hash,
             #sm::__private::serde::Serialize,
             #sm::__private::serde::Deserialize,
         }
@@ -544,11 +1249,12 @@ fn prelude_type(use_aliases: bool, name: TokenStream) -> TokenStream {
 }
 
 fn is_local_type(type_name: &TypeName, pkg: &NormalizedPackage) -> bool {
-    if type_name.address == pkg.storage_id {
+    let address = normalize_address(&type_name.address);
+    if address == normalize_address(&pkg.storage_id) {
         return true;
     }
     match &pkg.original_id {
-        Some(orig) => type_name.address == *orig,
+        Some(orig) => address == normalize_address(orig),
         None => false,
     }
 }
