@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Move-shaped typed layer for Rust, built on top of sui-sdk-types."
 readme = "README.md"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
