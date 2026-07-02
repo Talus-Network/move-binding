@@ -16,7 +16,10 @@ use quote::{format_ident, quote};
 use syn::parse::Parser;
 use syn::parse_quote;
 use syn::spanned::Spanned;
-use syn::{Data, DeriveInput, Field, FieldMutability, Fields, GenericParam, TypeParam};
+use syn::{
+    Data, DeriveInput, Field, FieldMutability, Fields, GenericParam, TypeParam, WhereClause,
+    WherePredicate,
+};
 
 use crate::abilities::{parse_inline_abilities, AbilityFlags};
 use crate::args::MoveStructArgs;
@@ -137,7 +140,7 @@ pub(crate) fn expand_move_struct(
         }
     }
 
-    let mut where_bounds: Vec<syn::WherePredicate> = Vec::new();
+    let mut type_param_bounds: Vec<WherePredicate> = Vec::new();
     for param in &type_param_idents {
         let ident = &param.ident;
         let mut bounds: Vec<syn::TypeParamBound> = vec![parse_quote!(::sui_move::MoveType)];
@@ -157,7 +160,7 @@ pub(crate) fn expand_move_struct(
             }
         }
 
-        where_bounds.push(parse_quote!(#ident: #(#bounds)+*));
+        type_param_bounds.push(parse_quote!(#ident: #(#bounds)+*));
     }
 
     if has_key
@@ -171,19 +174,24 @@ pub(crate) fn expand_move_struct(
         ));
     }
 
+    let mut store_bounds = type_param_bounds.clone();
+    let mut copy_bounds = type_param_bounds.clone();
+    let mut drop_bounds = type_param_bounds.clone();
+    let key_bounds = type_param_bounds.clone();
+
     for field in &original_fields {
         if is_phantom_field_type(&field.ty) {
             continue;
         }
         let ty = &field.ty;
         if has_copy {
-            where_bounds.push(parse_quote!(#ty: ::sui_move::HasCopy));
+            copy_bounds.push(parse_quote!(#ty: ::sui_move::HasCopy));
         }
         if has_drop {
-            where_bounds.push(parse_quote!(#ty: ::sui_move::HasDrop));
+            drop_bounds.push(parse_quote!(#ty: ::sui_move::HasDrop));
         }
         if has_store {
-            where_bounds.push(parse_quote!(#ty: ::sui_move::HasStore));
+            store_bounds.push(parse_quote!(#ty: ::sui_move::HasStore));
         }
     }
 
@@ -203,26 +211,29 @@ pub(crate) fn expand_move_struct(
         })
         .collect::<Vec<_>>();
 
+    let address_expr = if let Some(address_fn) = &args.address_fn {
+        quote! { #address_fn() }
+    } else {
+        quote! { ::sui_move::parse_address(#address).expect("invalid address literal") }
+    };
+
     let struct_tag_builder = quote! {
         ::sui_move::__private::sui_sdk_types::StructTag::new(
-            ::sui_move::parse_address(#address).expect("invalid address literal"),
+            #address_expr,
             ::sui_move::parse_identifier(#module_name).expect("invalid module"),
             ::sui_move::parse_identifier(#struct_name).expect("invalid struct name"),
             vec![#(#ty_params_for_tag),*],
         )
     };
 
-    let mut derives: Vec<syn::Path> = Vec::new();
-    if has_copy {
-        derives.push(parse_quote!(::core::clone::Clone));
-    }
-    derives.extend([
+    let derives: Vec<syn::Path> = vec![
         parse_quote!(::core::fmt::Debug),
         parse_quote!(::core::cmp::PartialEq),
         parse_quote!(::core::cmp::Eq),
+        parse_quote!(::core::hash::Hash),
         parse_quote!(::sui_move::__private::serde::Serialize),
         parse_quote!(::sui_move::__private::serde::Deserialize),
-    ]);
+    ];
 
     let mut output_struct = input;
     output_struct.ident = struct_ident.clone();
@@ -285,52 +296,71 @@ pub(crate) fn expand_move_struct(
     }
     output_struct.attrs.extend(serde_attrs);
 
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-    let where_clause = {
-        let mut where_clause = where_clause.cloned();
-        if !where_bounds.is_empty() {
-            if let Some(ref mut w) = where_clause {
-                w.predicates.extend(where_bounds.iter().cloned());
-            } else {
-                let preds = where_bounds.iter().cloned();
-                where_clause = Some(syn::WhereClause {
-                    where_token: Default::default(),
-                    predicates: preds.collect(),
-                });
-            }
-        }
-        where_clause
-    };
+    let mut clone_bounds = type_param_bounds.clone();
+    clone_bounds.extend(
+        original_fields
+            .iter()
+            .filter(|field| !is_phantom_field_type(&field.ty))
+            .map(|field| {
+                let ty = &field.ty;
+                parse_quote!(#ty: ::core::clone::Clone)
+            })
+            .collect::<Vec<WherePredicate>>(),
+    );
+    let clone_where_clause = where_clause_with(&generics, &clone_bounds);
+
+    let (impl_generics, ty_generics, _) = generics.split_for_impl();
+    let move_type_where_clause = where_clause_with(&generics, &type_param_bounds);
+    let key_where_clause = where_clause_with(&generics, &key_bounds);
+    let store_where_clause = where_clause_with(&generics, &store_bounds);
+    let copy_where_clause = where_clause_with(&generics, &copy_bounds);
+    let drop_where_clause = where_clause_with(&generics, &drop_bounds);
 
     let ability_impls = {
         let mut impls = Vec::new();
         if has_key {
             impls.push(quote! {
-                impl #impl_generics ::sui_move::HasKey for #struct_ident #ty_generics #where_clause {}
+                impl #impl_generics ::sui_move::HasKey for #struct_ident #ty_generics #key_where_clause {}
             });
         }
         if has_store {
             impls.push(quote! {
-                impl #impl_generics ::sui_move::HasStore for #struct_ident #ty_generics #where_clause {}
+                impl #impl_generics ::sui_move::HasStore for #struct_ident #ty_generics #store_where_clause {}
             });
         }
         if has_copy {
             impls.push(quote! {
-                impl #impl_generics ::sui_move::HasCopy for #struct_ident #ty_generics #where_clause {}
+                impl #impl_generics ::sui_move::HasCopy for #struct_ident #ty_generics #copy_where_clause {}
             });
         }
         if has_drop {
             impls.push(quote! {
-                impl #impl_generics ::sui_move::HasDrop for #struct_ident #ty_generics #where_clause {}
+                impl #impl_generics ::sui_move::HasDrop for #struct_ident #ty_generics #drop_where_clause {}
             });
         }
         quote! { #(#impls)* }
     };
 
+    let cloned_fields = fields.iter().map(|field| {
+        let ident = field
+            .ident
+            .as_ref()
+            .expect("move_struct supports only named fields");
+        quote! { #ident: ::core::clone::Clone::clone(&self.#ident), }
+    });
+
     Ok(quote! {
         #output_struct
 
-        impl #impl_generics ::sui_move::MoveType for #struct_ident #ty_generics #where_clause {
+        impl #impl_generics ::core::clone::Clone for #struct_ident #ty_generics #clone_where_clause {
+            fn clone(&self) -> Self {
+                Self {
+                    #(#cloned_fields)*
+                }
+            }
+        }
+
+        impl #impl_generics ::sui_move::MoveType for #struct_ident #ty_generics #move_type_where_clause {
             fn type_tag_static() -> ::sui_move::__private::sui_sdk_types::TypeTag {
                 ::sui_move::__private::sui_sdk_types::TypeTag::Struct(Box::new(
                     <Self as ::sui_move::MoveStruct>::struct_tag_static(),
@@ -338,12 +368,29 @@ pub(crate) fn expand_move_struct(
             }
         }
 
-        impl #impl_generics ::sui_move::MoveStruct for #struct_ident #ty_generics #where_clause {
+        impl #impl_generics ::sui_move::MoveStruct for #struct_ident #ty_generics #move_type_where_clause {
             fn struct_tag_static() -> ::sui_move::__private::sui_sdk_types::StructTag {
                 #struct_tag_builder
             }
         }
 
         #ability_impls
+    })
+}
+
+fn where_clause_with(generics: &syn::Generics, bounds: &[WherePredicate]) -> Option<WhereClause> {
+    let mut where_clause = generics.where_clause.clone();
+    if bounds.is_empty() {
+        return where_clause;
+    }
+
+    if let Some(ref mut existing) = where_clause {
+        existing.predicates.extend(bounds.iter().cloned());
+        return where_clause;
+    }
+
+    Some(WhereClause {
+        where_token: Default::default(),
+        predicates: bounds.iter().cloned().collect(),
     })
 }

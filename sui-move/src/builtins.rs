@@ -22,6 +22,7 @@ impl_primitive!(u16, U16);
 impl_primitive!(u32, U32);
 impl_primitive!(u64, U64);
 impl_primitive!(u128, U128);
+impl_primitive!(crate::U256, U256);
 impl_primitive!(bool, Bool);
 
 impl MoveType for sui_sdk_types::Address {
@@ -49,9 +50,23 @@ impl_ability_markers_primitive!(u16);
 impl_ability_markers_primitive!(u32);
 impl_ability_markers_primitive!(u64);
 impl_ability_markers_primitive!(u128);
+impl_ability_markers_primitive!(crate::U256);
 impl_ability_markers_primitive!(bool);
 impl_ability_markers_primitive!(sui_sdk_types::Address);
 
 impl<T: HasCopy> HasCopy for Vec<T> {}
 impl<T: HasDrop> HasDrop for Vec<T> {}
 impl<T: HasStore> HasStore for Vec<T> {}
+
+#[cfg(test)]
+mod tests {
+    use crate::MoveType;
+
+    #[test]
+    fn u256_has_move_type_tag_and_fixed_width_bcs() {
+        let value = crate::U256::from_le_bytes([7u8; 32]);
+
+        assert_eq!(crate::U256::type_tag_static(), sui_sdk_types::TypeTag::U256);
+        assert_eq!(bcs::to_bytes(&value).unwrap().len(), 32);
+    }
+}

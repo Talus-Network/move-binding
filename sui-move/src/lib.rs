@@ -16,7 +16,7 @@ pub mod prelude {
     pub use crate::{move_module, move_struct};
     pub use crate::{
         Copyable, Droppable, HasCopy, HasDrop, HasKey, HasStore, MoveInstance, MoveStruct,
-        MoveType, Storable,
+        MoveType, Storable, U256,
     };
     pub use sui_sdk_types::{Address, Identifier, StructTag, TypeTag};
 }
@@ -30,6 +30,27 @@ pub mod __private {
 mod builtins;
 pub mod decode;
 pub use decode::{decode_copyable, decode_keyed, decode_storable};
+
+/// Move `u256` value represented as 32 little-endian bytes.
+///
+/// This intentionally keeps arithmetic out of `sui-move`; the type exists so generated bindings
+/// can carry, serialize, and type-tag Move `u256` values without inventing package-specific
+/// representations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct U256([u8; 32]);
+
+impl U256 {
+    /// Construct a `u256` from its little-endian byte representation.
+    pub const fn from_le_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Return the little-endian byte representation.
+    pub const fn to_le_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
 
 /// A Rust type that corresponds to a Move type.
 ///
@@ -63,11 +84,6 @@ pub trait MoveType: Serialize + for<'de> Deserialize<'de> + fmt::Debug + Partial
         Self: Sized,
     {
         bcs::from_bytes(bytes)
-    }
-
-    /// Convert this value into JSON using `serde_json`.
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("serialization should not fail")
     }
 }
 

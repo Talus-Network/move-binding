@@ -15,6 +15,7 @@ use syn::Lit;
 #[derive(Default)]
 pub(crate) struct MoveStructArgs {
     pub(crate) address: Option<String>,
+    pub(crate) address_fn: Option<syn::Path>,
     pub(crate) module: Option<String>,
     pub(crate) name: Option<String>,
     pub(crate) abilities: Vec<String>,
@@ -41,6 +42,22 @@ impl Parse for MoveStructArgs {
                         args.address = Some(s.value());
                     } else {
                         return Err(syn::Error::new(lit.span(), "address must be a string"));
+                    }
+                }
+                "address_fn" => {
+                    if let Lit::Str(ref s) = lit {
+                        let path: syn::Path = syn::parse_str(&s.value()).map_err(|_| {
+                            syn::Error::new(
+                                s.span(),
+                                "address_fn must be a valid Rust function path",
+                            )
+                        })?;
+                        args.address_fn = Some(path);
+                    } else {
+                        return Err(syn::Error::new(
+                            lit.span(),
+                            "address_fn must be a string literal path",
+                        ));
                     }
                 }
                 "module" => {

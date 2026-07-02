@@ -7,7 +7,8 @@
 //!
 //! The generated code is designed to plug into the rest of the workspace:
 //! - generated types implement `sui-move` traits (`MoveType` / `MoveStruct`) and ability markers
-//! - generated functions return `sui-move-call::CallSpec`
+//! - generated call targets identify Move functions for PTB builders
+//! - generated call-spec builders can return `sui-move-call::CallSpec`
 //! - optionally, a `TxExt` trait is emitted to add calls directly to `sui-move-runtime::Tx`
 
 use std::collections::BTreeMap;
@@ -32,6 +33,11 @@ pub struct RenderOptions {
     pub emit_types: bool,
     /// Emit call builder functions.
     pub emit_calls: bool,
+    /// Emit typed `CallSpec` builders in addition to generated `*_target` functions.
+    ///
+    /// Set this to `false` for consumers that compose PTBs from generated targets and explicit
+    /// `sui_sdk_types::Argument`s.
+    pub emit_call_specs: bool,
     /// Emit runtime helpers for `sui-move-runtime` (`TxExt`).
     ///
     /// When enabled, generated code includes a `TxExt` trait implemented for
@@ -49,6 +55,8 @@ pub struct RenderOptions {
     /// - `use sui_move as sm;`
     /// - `use sui_move_call as sm_call;`
     pub use_aliases: bool,
+    /// If `true`, re-export generated datatypes from the package root.
+    pub emit_reexports: bool,
     /// Rust paths for Move datatypes defined outside the package currently being rendered.
     ///
     /// This is the explicit cross-package symbol table. The renderer still treats unknown external
@@ -75,9 +83,11 @@ impl Default for RenderOptions {
         Self {
             emit_types: true,
             emit_calls: true,
+            emit_call_specs: true,
             emit_tx_ext: false,
             flatten: false,
             use_aliases: true,
+            emit_reexports: true,
             external_types: BTreeMap::new(),
         }
     }
@@ -174,6 +184,19 @@ fn external_type_names(pkg: &NormalizedPackage, dt: &crate::ir::Datatype) -> Vec
     names
 }
 
+/// Rendered package split into package-root code and one generated module block per Move module.
+///
+/// This is useful for build scripts that need to choose their own `include!` layout without
+/// parsing rendered Rust source text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenderedPackageParts {
+    /// Package-root code: package constants, package scoping helpers, optional `TxExt`, and
+    /// optional root re-exports.
+    pub root: String,
+    /// `pub mod ... { ... }` blocks keyed by Move module name.
+    pub modules: BTreeMap<String, String>,
+}
+
 /// Render a normalized package into a single Rust source string.
 ///
 /// The output is valid Rust source that you can write to a `.rs` file (or `include!` as a module).
@@ -199,18 +222,39 @@ fn external_type_names(pkg: &NormalizedPackage, dt: &crate::ir::Datatype) -> Vec
 /// };
 ///
 /// let code = render_package(&pkg, &RenderOptions::default());
-/// assert!(code.contains("pub const PACKAGE"));
+/// assert!(code.contains("pub const CALL_PACKAGE"));
 /// ```
 pub fn render_package(pkg: &NormalizedPackage, opts: &RenderOptions) -> String {
     let tokens = util::render_package_tokens(pkg, opts);
     util::prettify(tokens)
 }
 
+/// Render a normalized package into package-root source and per-module `pub mod ...` blocks.
+///
+/// Unlike [`render_package_split`], this does not write files or assume `mod.rs` plus sibling
+/// module files. Callers decide how to include or store the returned strings.
+pub fn render_package_parts(pkg: &NormalizedPackage, opts: &RenderOptions) -> RenderedPackageParts {
+    let mut parts_opts = opts.clone();
+    parts_opts.flatten = false;
+
+    let root = util::prettify(util::render_package_root_tokens(pkg, &parts_opts, false));
+    let modules = pkg
+        .modules
+        .values()
+        .map(|module| {
+            let tokens = util::render_module(module, pkg, &parts_opts);
+            (module.name.clone(), util::prettify(tokens))
+        })
+        .collect();
+
+    RenderedPackageParts { root, modules }
+}
+
 /// Render a normalized package into multiple files (`mod.rs` + one file per Move module).
 ///
 /// This is convenient if you want the generated code to mirror the Move module structure on disk.
 /// The output directory will contain:
-/// - `mod.rs` (with `PACKAGE`, `pub mod ...;`, and `pub use ...;` re-exports)
+/// - `mod.rs` (with package scope helpers, `pub mod ...;`, and `pub use ...;` re-exports)
 /// - one `*.rs` file per Move module
 pub fn render_package_split(
     pkg: &NormalizedPackage,
@@ -253,51 +297,134 @@ mod tests {
                 "m".into(),
                 NormalizedModule {
                     name: "m".into(),
+                    datatypes: vec![
+                        Datatype {
+                            type_name: TypeName::parse("0x1::m::Obj").unwrap(),
+                            module: "m".into(),
+                            name: "Obj".into(),
+                            abilities: vec![Ability::Key, Ability::Store],
+                            type_parameters: vec![],
+                            kind: DatatypeKind::Struct {
+                                fields: vec![Field {
+                                    name: "id".into(),
+                                    position: 0,
+                                    ty: TypeRef::Datatype {
+                                        type_name: TypeName::parse("0x2::object::UID").unwrap(),
+                                        type_arguments: vec![],
+                                    },
+                                }],
+                            },
+                        },
+                        Datatype {
+                            type_name: TypeName::parse("0x1::m::Pair").unwrap(),
+                            module: "m".into(),
+                            name: "Pair".into(),
+                            abilities: vec![Ability::Store, Ability::Copy, Ability::Drop],
+                            type_parameters: vec![],
+                            kind: DatatypeKind::Struct {
+                                fields: vec![
+                                    Field {
+                                        name: "left".into(),
+                                        position: 0,
+                                        ty: TypeRef::U8,
+                                    },
+                                    Field {
+                                        name: "right".into(),
+                                        position: 1,
+                                        ty: TypeRef::Bool,
+                                    },
+                                ],
+                            },
+                        },
+                    ],
+                    functions: vec![
+                        Function {
+                            name: "mutate".into(),
+                            visibility: Visibility::Public,
+                            is_entry: true,
+                            type_parameters: vec![],
+                            parameters: vec![
+                                FunctionParam {
+                                    name: "arg0".into(),
+                                    ty: TypeRef::Ref {
+                                        mutable: true,
+                                        inner: Box::new(TypeRef::Datatype {
+                                            type_name: TypeName::parse("0x1::m::Obj").unwrap(),
+                                            type_arguments: vec![],
+                                        }),
+                                    },
+                                },
+                                FunctionParam {
+                                    name: "arg1".into(),
+                                    ty: TypeRef::Ref {
+                                        mutable: true,
+                                        inner: Box::new(TypeRef::Datatype {
+                                            type_name: TypeName::parse(
+                                                "0x2::tx_context::TxContext",
+                                            )
+                                            .unwrap(),
+                                            type_arguments: vec![],
+                                        }),
+                                    },
+                                },
+                            ],
+                            return_types: vec![],
+                        },
+                        Function {
+                            name: "private_entry".into(),
+                            visibility: Visibility::Private,
+                            is_entry: true,
+                            type_parameters: vec![],
+                            parameters: vec![],
+                            return_types: vec![],
+                        },
+                    ],
+                },
+            )]),
+        }
+    }
+
+    fn generic_value_arg_pkg() -> NormalizedPackage {
+        NormalizedPackage {
+            storage_id: "0x1".into(),
+            original_id: None,
+            version: 0,
+            modules: BTreeMap::from([(
+                "m".into(),
+                NormalizedModule {
+                    name: "m".into(),
                     datatypes: vec![Datatype {
-                        type_name: TypeName::parse("0x1::m::Obj").unwrap(),
+                        type_name: TypeName::parse("0x1::m::Cloneable").unwrap(),
                         module: "m".into(),
-                        name: "Obj".into(),
-                        abilities: vec![Ability::Key, Ability::Store],
-                        type_parameters: vec![],
+                        name: "Cloneable".into(),
+                        abilities: vec![Ability::Store, Ability::Copy, Ability::Drop],
+                        type_parameters: vec![TypeParameter {
+                            constraints: vec![Ability::Store, Ability::Copy],
+                            is_phantom: false,
+                        }],
                         kind: DatatypeKind::Struct {
                             fields: vec![Field {
-                                name: "id".into(),
+                                name: "value".into(),
                                 position: 0,
-                                ty: TypeRef::Datatype {
-                                    type_name: TypeName::parse("0x2::object::UID").unwrap(),
-                                    type_arguments: vec![],
-                                },
+                                ty: TypeRef::TypeParameter(0),
                             }],
                         },
                     }],
                     functions: vec![Function {
-                        name: "mutate".into(),
+                        name: "use_cloneable".into(),
                         visibility: Visibility::Public,
                         is_entry: true,
-                        type_parameters: vec![],
-                        parameters: vec![
-                            FunctionParam {
-                                name: "arg0".into(),
-                                ty: TypeRef::Ref {
-                                    mutable: true,
-                                    inner: Box::new(TypeRef::Datatype {
-                                        type_name: TypeName::parse("0x1::m::Obj").unwrap(),
-                                        type_arguments: vec![],
-                                    }),
-                                },
+                        type_parameters: vec![TypeParameter {
+                            constraints: vec![Ability::Store, Ability::Copy],
+                            is_phantom: false,
+                        }],
+                        parameters: vec![FunctionParam {
+                            name: "arg0".into(),
+                            ty: TypeRef::Datatype {
+                                type_name: TypeName::parse("0x1::m::Cloneable").unwrap(),
+                                type_arguments: vec![TypeRef::TypeParameter(0)],
                             },
-                            FunctionParam {
-                                name: "arg1".into(),
-                                ty: TypeRef::Ref {
-                                    mutable: true,
-                                    inner: Box::new(TypeRef::Datatype {
-                                        type_name: TypeName::parse("0x2::tx_context::TxContext")
-                                            .unwrap(),
-                                        type_arguments: vec![],
-                                    }),
-                                },
-                            },
-                        ],
+                        }],
                         return_types: vec![],
                     }],
                 },
@@ -305,10 +432,371 @@ mod tests {
         }
     }
 
+    fn option_pkg() -> NormalizedPackage {
+        NormalizedPackage {
+            storage_id: "0x1".into(),
+            original_id: None,
+            version: 0,
+            modules: BTreeMap::from([(
+                "option".into(),
+                NormalizedModule {
+                    name: "option".into(),
+                    datatypes: vec![Datatype {
+                        type_name: TypeName::parse("0x1::option::Option").unwrap(),
+                        module: "option".into(),
+                        name: "Option".into(),
+                        abilities: vec![Ability::Store, Ability::Copy, Ability::Drop],
+                        type_parameters: vec![TypeParameter {
+                            constraints: vec![],
+                            is_phantom: false,
+                        }],
+                        kind: DatatypeKind::Struct {
+                            fields: vec![Field {
+                                name: "vec".into(),
+                                position: 0,
+                                ty: TypeRef::Vector(Box::new(TypeRef::TypeParameter(0))),
+                            }],
+                        },
+                    }],
+                    functions: vec![],
+                },
+            )]),
+        }
+    }
+
+    fn layout_helper_pkg() -> NormalizedPackage {
+        NormalizedPackage {
+            storage_id: "0x2".into(),
+            original_id: None,
+            version: 0,
+            modules: BTreeMap::from([
+                (
+                    "table_vec".into(),
+                    NormalizedModule {
+                        name: "table_vec".into(),
+                        datatypes: vec![Datatype {
+                            type_name: TypeName::parse("0x2::table_vec::TableVec").unwrap(),
+                            module: "table_vec".into(),
+                            name: "TableVec".into(),
+                            abilities: vec![Ability::Store],
+                            type_parameters: vec![TypeParameter {
+                                constraints: vec![Ability::Store],
+                                is_phantom: true,
+                            }],
+                            kind: DatatypeKind::Struct {
+                                fields: vec![Field {
+                                    name: "contents".into(),
+                                    position: 0,
+                                    ty: TypeRef::Datatype {
+                                        type_name: TypeName::parse("0x2::table::Table").unwrap(),
+                                        type_arguments: vec![
+                                            TypeRef::U64,
+                                            TypeRef::TypeParameter(0),
+                                        ],
+                                    },
+                                }],
+                            },
+                        }],
+                        functions: vec![],
+                    },
+                ),
+                (
+                    "vec_map".into(),
+                    NormalizedModule {
+                        name: "vec_map".into(),
+                        datatypes: vec![
+                            Datatype {
+                                type_name: TypeName::parse("0x2::vec_map::Entry").unwrap(),
+                                module: "vec_map".into(),
+                                name: "Entry".into(),
+                                abilities: vec![Ability::Store, Ability::Copy, Ability::Drop],
+                                type_parameters: vec![
+                                    TypeParameter {
+                                        constraints: vec![Ability::Copy],
+                                        is_phantom: false,
+                                    },
+                                    TypeParameter {
+                                        constraints: vec![],
+                                        is_phantom: false,
+                                    },
+                                ],
+                                kind: DatatypeKind::Struct {
+                                    fields: vec![
+                                        Field {
+                                            name: "key".into(),
+                                            position: 0,
+                                            ty: TypeRef::TypeParameter(0),
+                                        },
+                                        Field {
+                                            name: "value".into(),
+                                            position: 1,
+                                            ty: TypeRef::TypeParameter(1),
+                                        },
+                                    ],
+                                },
+                            },
+                            Datatype {
+                                type_name: TypeName::parse("0x2::vec_map::VecMap").unwrap(),
+                                module: "vec_map".into(),
+                                name: "VecMap".into(),
+                                abilities: vec![Ability::Store, Ability::Copy, Ability::Drop],
+                                type_parameters: vec![
+                                    TypeParameter {
+                                        constraints: vec![Ability::Copy],
+                                        is_phantom: false,
+                                    },
+                                    TypeParameter {
+                                        constraints: vec![],
+                                        is_phantom: false,
+                                    },
+                                ],
+                                kind: DatatypeKind::Struct {
+                                    fields: vec![Field {
+                                        name: "contents".into(),
+                                        position: 0,
+                                        ty: TypeRef::Vector(Box::new(TypeRef::Datatype {
+                                            type_name: TypeName::parse("0x2::vec_map::Entry")
+                                                .unwrap(),
+                                            type_arguments: vec![
+                                                TypeRef::TypeParameter(0),
+                                                TypeRef::TypeParameter(1),
+                                            ],
+                                        })),
+                                    }],
+                                },
+                            },
+                        ],
+                        functions: vec![],
+                    },
+                ),
+            ]),
+        }
+    }
+
+    fn rust_copy_shape_pkg() -> NormalizedPackage {
+        NormalizedPackage {
+            storage_id: "0x1".into(),
+            original_id: None,
+            version: 0,
+            modules: BTreeMap::from([(
+                "m".into(),
+                NormalizedModule {
+                    name: "m".into(),
+                    datatypes: vec![
+                        Datatype {
+                            type_name: TypeName::parse("0x1::m::Scalar").unwrap(),
+                            module: "m".into(),
+                            name: "Scalar".into(),
+                            abilities: vec![Ability::Store, Ability::Copy, Ability::Drop],
+                            type_parameters: vec![],
+                            kind: DatatypeKind::Struct {
+                                fields: vec![Field {
+                                    name: "value".into(),
+                                    position: 0,
+                                    ty: TypeRef::U64,
+                                }],
+                            },
+                        },
+                        Datatype {
+                            type_name: TypeName::parse("0x1::m::Nested").unwrap(),
+                            module: "m".into(),
+                            name: "Nested".into(),
+                            abilities: vec![Ability::Store, Ability::Copy, Ability::Drop],
+                            type_parameters: vec![],
+                            kind: DatatypeKind::Struct {
+                                fields: vec![Field {
+                                    name: "scalar".into(),
+                                    position: 0,
+                                    ty: TypeRef::Datatype {
+                                        type_name: TypeName::parse("0x1::m::Scalar").unwrap(),
+                                        type_arguments: vec![],
+                                    },
+                                }],
+                            },
+                        },
+                        Datatype {
+                            type_name: TypeName::parse("0x1::m::Bytes").unwrap(),
+                            module: "m".into(),
+                            name: "Bytes".into(),
+                            abilities: vec![Ability::Store, Ability::Copy, Ability::Drop],
+                            type_parameters: vec![],
+                            kind: DatatypeKind::Struct {
+                                fields: vec![Field {
+                                    name: "value".into(),
+                                    position: 0,
+                                    ty: TypeRef::Vector(Box::new(TypeRef::U8)),
+                                }],
+                            },
+                        },
+                        Datatype {
+                            type_name: TypeName::parse("0x1::m::Generic").unwrap(),
+                            module: "m".into(),
+                            name: "Generic".into(),
+                            abilities: vec![Ability::Store, Ability::Copy, Ability::Drop],
+                            type_parameters: vec![TypeParameter {
+                                constraints: vec![Ability::Store, Ability::Copy],
+                                is_phantom: false,
+                            }],
+                            kind: DatatypeKind::Struct {
+                                fields: vec![Field {
+                                    name: "value".into(),
+                                    position: 0,
+                                    ty: TypeRef::TypeParameter(0),
+                                }],
+                            },
+                        },
+                        Datatype {
+                            type_name: TypeName::parse("0x1::m::ScalarChoice").unwrap(),
+                            module: "m".into(),
+                            name: "ScalarChoice".into(),
+                            abilities: vec![Ability::Store, Ability::Copy, Ability::Drop],
+                            type_parameters: vec![],
+                            kind: DatatypeKind::Enum {
+                                variants: vec![
+                                    Variant {
+                                        name: "None".into(),
+                                        position: 0,
+                                        fields: vec![],
+                                    },
+                                    Variant {
+                                        name: "Some".into(),
+                                        position: 1,
+                                        fields: vec![Field {
+                                            name: "value".into(),
+                                            position: 0,
+                                            ty: TypeRef::Datatype {
+                                                type_name: TypeName::parse("0x1::m::Nested")
+                                                    .unwrap(),
+                                                type_arguments: vec![],
+                                            },
+                                        }],
+                                    },
+                                ],
+                            },
+                        },
+                    ],
+                    functions: vec![],
+                },
+            )]),
+        }
+    }
+
+    fn item_prefix<'a>(code: &'a str, item: &str) -> &'a str {
+        let end = code.find(item).expect("rendered item");
+        let start = code[..end].rfind("///Move type:").unwrap_or(0);
+        &code[start..end]
+    }
+
     #[test]
     fn renders_mutable_object_params_with_push_arg_mut() {
         let code = render_package(&demo_pkg(), &RenderOptions::default());
         assert!(code.contains("push_arg_mut(arg0)"));
+    }
+
+    #[test]
+    fn generated_bindings_use_scoped_package_for_calls_and_type_tags() {
+        let code = render_package(&demo_pkg(), &RenderOptions::default());
+
+        assert!(code.contains("thread_local!"));
+        assert!(code.contains("pub fn call_package() -> sui_move::prelude::Address"));
+        assert!(code.contains("pub fn type_package() -> sui_move::prelude::Address"));
+        assert!(code.contains("pub fn with_packages<R>"));
+        assert!(!code.contains("pub fn package()"));
+        assert!(!code.contains("pub fn with_package<R>"));
+        assert!(code.contains("CallTarget::new(call_package(), \"m\", \"mutate\")"));
+        assert!(code.contains("address_fn = \"super::type_package\""));
+    }
+
+    #[test]
+    fn generated_bindings_split_call_and_type_package_scopes() {
+        let code = render_package(&demo_pkg(), &RenderOptions::default());
+
+        assert!(code.contains("pub const CALL_PACKAGE"));
+        assert!(code.contains("pub const TYPE_PACKAGE"));
+        assert!(code.contains("pub fn call_package() -> sui_move::prelude::Address"));
+        assert!(code.contains("pub fn type_package() -> sui_move::prelude::Address"));
+        assert!(code.contains("pub fn with_packages<R>"));
+        assert!(code.contains("CallTarget::new(call_package(), \"m\", \"mutate\")"));
+        assert!(code.contains("address_fn = \"super::type_package\""));
+    }
+
+    #[test]
+    fn generated_calls_include_entry_functions_even_when_not_public() {
+        let code = render_package(&demo_pkg(), &RenderOptions::default());
+        assert!(code.contains("pub fn private_entry"));
+        assert!(code.contains("pub fn private_entry_target"));
+    }
+
+    #[test]
+    fn generated_calls_return_result_instead_of_panicking() {
+        let code = render_package(&demo_pkg(), &RenderOptions::default());
+        assert!(code.contains("-> Result<sm_call::CallSpec"));
+        assert!(!code.contains("expect(\"encode arg\")"));
+    }
+
+    #[test]
+    fn generated_calls_can_emit_targets_without_call_specs() {
+        let opts = RenderOptions {
+            emit_call_specs: false,
+            ..RenderOptions::default()
+        };
+        let code = render_package(&demo_pkg(), &opts);
+
+        assert!(code.contains("pub fn mutate_target() -> Result<sm_call::CallTarget"));
+        assert!(!code.contains("pub fn mutate("));
+        assert!(!code.contains("Result<sm_call::CallSpec"));
+        assert!(!code.contains("push_arg_mut(arg0)"));
+    }
+
+    #[test]
+    fn generated_calls_include_bounds_required_by_argument_structs() {
+        let code = render_package(&generic_value_arg_pkg(), &RenderOptions::default());
+
+        assert!(code.contains("pub fn use_cloneable<T0>"));
+        assert!(code.contains("T0: sm::MoveType + sm::HasCopy + sm::HasDrop + sm::HasStore"));
+    }
+
+    #[test]
+    fn generated_structs_include_named_field_constructors() {
+        let code = render_package(&demo_pkg(), &RenderOptions::default());
+
+        assert!(code.contains("pub fn new(left: u8, right: bool) -> Self"));
+        assert!(code.contains("left: left.into()"));
+        assert!(code.contains("right: right.into()"));
+    }
+
+    #[test]
+    fn generated_option_layout_helpers_do_not_require_move_type_bounds() {
+        let code = render_package(&option_pkg(), &RenderOptions::default());
+
+        assert!(code.contains("pub fn from_option(value: std::option::Option<T0>) -> Self"));
+        assert!(code.contains("impl<T0> Default for Option<T0>"));
+        assert!(code.contains("impl<T0> From<std::option::Option<T0>> for Option<T0>"));
+        assert!(!code.contains("T0: sm::MoveType"));
+    }
+
+    #[test]
+    fn generated_collection_layout_helpers_use_minimal_rust_bounds() {
+        let code = render_package(&layout_helper_pkg(), &RenderOptions::default());
+
+        assert!(code.contains("pub fn size_u64(&self) -> u64"));
+        assert!(code.contains("pub fn into_hash_map(self) -> std::collections::HashMap<T0, T1>"));
+        assert!(!code.contains("T0: sm::MoveType"));
+        assert!(!code.contains("T1: sm::MoveType"));
+        assert!(!code.contains("T0: sm::MoveType + sm::HasCopy"));
+    }
+
+    #[test]
+    fn generated_rust_copy_tracks_rust_carrier_shape() {
+        let code = render_package(&rust_copy_shape_pkg(), &RenderOptions::default());
+
+        assert!(item_prefix(&code, "pub struct Scalar").contains("#[derive(::core::marker::Copy)]"));
+        assert!(item_prefix(&code, "pub struct Nested").contains("#[derive(::core::marker::Copy)]"));
+        assert!(!item_prefix(&code, "pub struct Bytes").contains("#[derive(::core::marker::Copy)]"));
+        assert!(
+            !item_prefix(&code, "pub struct Generic").contains("#[derive(::core::marker::Copy)]")
+        );
+        assert!(item_prefix(&code, "pub enum ScalarChoice").contains("::core::marker::Copy"));
     }
 
     #[test]
@@ -406,6 +894,52 @@ mod tests {
     }
 
     #[test]
+    fn render_package_parts_returns_root_and_modules_without_string_parsing() {
+        let opts = RenderOptions {
+            emit_reexports: false,
+            ..RenderOptions::default()
+        };
+        let parts = render_package_parts(&demo_pkg(), &opts);
+
+        assert!(parts.root.contains("pub const CALL_PACKAGE"));
+        assert!(parts.root.contains("pub fn with_packages<R>"));
+        assert!(!parts.root.contains("pub mod m"));
+        assert!(!parts.root.contains("pub use m::Obj"));
+
+        let module = parts.modules.get("m").expect("module body");
+        assert!(module.contains("pub mod m"));
+        assert!(module.contains("use super::{call_package, type_package};"));
+        assert!(module.contains("pub struct Obj"));
+        assert!(module.contains("pub fn mutate"));
+    }
+
+    #[test]
+    fn render_package_parts_can_emit_targets_without_call_specs() {
+        let opts = RenderOptions {
+            emit_call_specs: false,
+            ..RenderOptions::default()
+        };
+        let parts = render_package_parts(&demo_pkg(), &opts);
+        let module = parts.modules.get("m").expect("module body");
+
+        assert!(module.contains("pub fn mutate_target() -> Result<sm_call::CallTarget"));
+        assert!(!module.contains("pub fn mutate("));
+        assert!(!module.contains("Result<sm_call::CallSpec"));
+        assert!(!module.contains("push_arg_mut(arg0)"));
+    }
+
+    #[test]
+    fn emit_reexports_false_suppresses_single_file_root_reexports() {
+        let opts = RenderOptions {
+            emit_reexports: false,
+            ..RenderOptions::default()
+        };
+        let code = render_package(&demo_pkg(), &opts);
+
+        assert!(!code.contains("pub use m::Obj"));
+    }
+
+    #[test]
     fn renders_tx_ext_trait_when_enabled() {
         let opts = RenderOptions {
             emit_tx_ext: true,
@@ -415,7 +949,8 @@ mod tests {
         assert!(code.contains("pub trait TxExt"));
         assert!(code.contains("fn m__mutate"));
         assert!(code.contains("impl<'a, S> TxExt for sui_move_runtime::Tx<'a, S>"));
-        assert!(code.contains("self.call(m::mutate"));
+        assert!(code.contains("let spec = m::mutate"));
+        assert!(code.contains("self.call(spec)"));
     }
 
     #[test]
