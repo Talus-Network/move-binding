@@ -278,17 +278,22 @@ impl PtbBuilder {
         }
     }
 
-    /// Add a coin withdrawn from the transaction sender's SIP-58 address balance.
+    /// Withdraw funds from the transaction sender's SIP-58 address balance and redeem them as a
+    /// `Coin<T>`.
     pub fn funds_withdrawal_coin(
         &mut self,
         coin_type: TypeTag,
         amount: u64,
     ) -> Result<Argument, BuildError> {
-        self.input(CallArg::FundsWithdrawal(FundsWithdrawal::new(
+        let withdrawal = self.input(CallArg::FundsWithdrawal(FundsWithdrawal::new(
             amount,
-            coin_type,
+            coin_type.clone(),
             WithdrawFrom::Sender,
-        )))
+        )))?;
+        let mut target = CallTarget::new(Address::from_static("0x2"), "coin", "redeem_funds")?;
+        target.type_arguments.push(coin_type);
+
+        self.call_target(target, vec![withdrawal])
     }
 
     /// Add the Sui clock object as an immutable shared PTB input.
