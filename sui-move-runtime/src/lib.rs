@@ -34,6 +34,10 @@ pub enum Error {
     #[error(transparent)]
     Build(#[from] sui_move_ptb::BuildError),
 
+    /// Constructing a generated Move call failed.
+    #[error(transparent)]
+    CallSpec(#[from] sui_move_call::CallSpecError),
+
     /// Signing or submitting failed.
     #[error(transparent)]
     Tx(#[from] tx::TxError),
@@ -615,7 +619,7 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
         &mut self,
         modules: Vec<Vec<u8>>,
         dependencies: Vec<Address>,
-    ) -> Result<(), Error> {
+    ) -> Result<sui_sdk_types::Argument, Error> {
         Ok(self.ptb.publish(modules, dependencies)?)
     }
 

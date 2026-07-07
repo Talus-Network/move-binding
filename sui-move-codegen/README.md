@@ -33,24 +33,47 @@ The pipeline is intentionally split in two:
    (`NormalizedPackage`).
 2. **Render (offline)**: render Rust source from that IR.
 
-Because the IR is JSON-friendly, you can commit it and re-render deterministically in CI without
+Because the IR is JSON-serializable, you can commit it and re-render deterministically in CI without
 needing network access.
 
 ## What gets generated
 
 Given a `NormalizedPackage` (either fetched from gRPC or loaded from JSON), this crate can render:
 
-- A `pub const PACKAGE: Address` (the on-chain package id)
+- `CALL_PACKAGE` / `TYPE_PACKAGE` constants for generated calls and type identity
+- `call_package()` / `type_package()` / `with_packages(...)` helpers for scoped package-id overrides
 - One Rust module per Move module (or a flat layout via `RenderOptions::flatten`)
 - Move datatypes as Rust types (structs use `#[sui_move::move_struct]` via `sui-move`’s `derive`
   feature)
-- Move functions as Rust functions that return `sui_move_call::CallSpec`
+- Move functions as generated `*_target` functions
+- Optional typed Rust functions that return `sui_move_call::CallSpec`
 - (optional) A `TxExt` trait implemented for `sui_move_runtime::Tx` (enable with
   `RenderOptions::emit_tx_ext`)
 
 Those generated call builders are designed to be used directly in higher layers:
 - `sui-move-ptb` can consume `CallSpec` to build a `ProgrammableTransaction`
 - `sui-move-runtime` can consume `CallSpec` via its tx builder (or `sui_move_runtime::tx!`)
+
+Use `with_packages` when generated calls target one deployment package while type tags retain the
+package that defines the Move types:
+
+```rust
+# use sui_sdk_types::Address;
+# mod bindings {
+#     pub fn with_packages<R>(
+#         _call_package: sui_sdk_types::Address,
+#         _type_package: sui_sdk_types::Address,
+#         f: impl FnOnce() -> R,
+#     ) -> R { f() }
+#     pub mod m {
+#         pub fn f(_arg0: u64) {}
+#     }
+# }
+# let localnet_package = Address::ZERO;
+bindings::with_packages(localnet_package, localnet_package, || {
+    bindings::m::f(10);
+});
+```
 
 ## Example: render from an in-memory IR
 
@@ -101,7 +124,7 @@ let pkg = NormalizedPackage {
 };
 
 let code = render_package(&pkg, &RenderOptions::default());
-assert!(code.contains("pub const PACKAGE"));
+assert!(code.contains("pub const CALL_PACKAGE"));
 assert!(code.contains("pub struct S"));
 assert!(code.contains("pub fn f"));
 ```
@@ -185,7 +208,7 @@ let pkg = NormalizedPackage {
 };
 
 let code = render_package(&pkg, &RenderOptions::default());
-let start = code.find("pub fn mutate").unwrap();
+let start = code.find("pub fn mutate(").unwrap();
 let sig_end = start + code[start..].find('{').unwrap();
 let sig = &code[start..sig_end];
 
@@ -312,14 +335,14 @@ let pkg = NormalizedPackage {
 };
 
 let code = render_package(&pkg, &RenderOptions::default());
-let start = code.find("pub fn id").unwrap();
+let start = code.find("pub fn id<T0>(").unwrap();
 let sig_end = start + code[start..].find('{').unwrap();
 let sig = &code[start..sig_end];
 
 assert!(sig.contains("pub fn id<T0>(arg0: Vec<T0>)"));
 assert!(sig.contains("where"));
 assert!(sig.contains("T0: sm::MoveType + sm::HasStore"));
-assert!(code.contains("spec.push_type_arg::<T0>();"));
+assert!(code.contains("target.push_type_arg::<T0>();"));
 ```
 
 ## Example: fetch over gRPC
@@ -334,14 +357,14 @@ let package_id: Address = "0x2".parse()?;
 
 let pkg = fetch_package(&mut client, package_id).await?;
 let json = pkg.to_json_string()?;
-println!("{json}");
+println!("{} bytes", json.len());
 # Ok(())
 # }
 ```
 
 ## Recommended workflow
 
-To keep builds deterministic, fetch metadata once and commit it (JSON), then render from JSON:
+To keep builds deterministic, fetch metadata once and commit it as JSON, then render from JSON:
 
 1. Fetch and save `NormalizedPackage` JSON (out-of-band; not in `build.rs`)
 2. Render Rust bindings from that JSON during builds or as a pre-generation step

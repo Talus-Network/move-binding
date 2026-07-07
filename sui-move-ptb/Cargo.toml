@@ -9,7 +9,8 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-sui-move-call = { version = "0.1.0", path = "../sui-move-call" }
+sui-move = { path = "../sui-move" }
+sui-move-call = { path = "../sui-move-call" }
 sui-sdk-types = { workspace = true }
 thiserror = { workspace = true }
 

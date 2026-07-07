@@ -365,6 +365,55 @@ pub enum CallSpecError {
     /// The provided function string is not a valid Move identifier.
     #[error("invalid Move identifier for function: `{0}`")]
     Function(String),
+    /// A call argument could not be encoded or converted.
+    #[error(transparent)]
+    Arg(#[from] CallArgError),
+}
+
+/// Move call target without encoded arguments.
+///
+/// This is the lower-level boundary for PTB composition: generated code owns package, module,
+/// function, and type arguments, while `sui-move-ptb` can wire arbitrary PTB `Argument`s including
+/// previous command results.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CallTarget {
+    /// Package ID that contains the Move module.
+    pub package: Address,
+    /// Move module identifier.
+    pub module: Identifier,
+    /// Move function identifier.
+    pub function: Identifier,
+    /// Type arguments for the call (Move `TypeTag`s).
+    pub type_arguments: Vec<TypeTag>,
+}
+
+impl CallTarget {
+    /// Create an empty call target for a `(package, module, function)` triple.
+    pub fn new(
+        package: Address,
+        module: impl AsRef<str>,
+        function: impl AsRef<str>,
+    ) -> Result<Self, CallSpecError> {
+        let module_str = module.as_ref();
+        let function_str = function.as_ref();
+
+        let module = Identifier::from_str(module_str)
+            .map_err(|_| CallSpecError::Module(module_str.to_string()))?;
+        let function = Identifier::from_str(function_str)
+            .map_err(|_| CallSpecError::Function(function_str.to_string()))?;
+
+        Ok(Self {
+            package,
+            module,
+            function,
+            type_arguments: Vec::new(),
+        })
+    }
+
+    /// Append a type argument derived from a `MoveType`.
+    pub fn push_type_arg<T: MoveType>(&mut self) {
+        self.type_arguments.push(T::type_tag_static());
+    }
 }
 
 /// A description of a Move function call.
@@ -419,21 +468,30 @@ impl CallSpec {
         module: impl AsRef<str>,
         function: impl AsRef<str>,
     ) -> Result<Self, CallSpecError> {
-        let module_str = module.as_ref();
-        let function_str = function.as_ref();
+        Ok(Self::from_target(CallTarget::new(
+            package, module, function,
+        )?))
+    }
 
-        let module = Identifier::from_str(module_str)
-            .map_err(|_| CallSpecError::Module(module_str.to_string()))?;
-        let function = Identifier::from_str(function_str)
-            .map_err(|_| CallSpecError::Function(function_str.to_string()))?;
-
-        Ok(Self {
-            package,
-            module,
-            function,
-            type_arguments: Vec::new(),
+    /// Create an empty call spec from a generated call target.
+    pub fn from_target(target: CallTarget) -> Self {
+        Self {
+            package: target.package,
+            module: target.module,
+            function: target.function,
+            type_arguments: target.type_arguments,
             arguments: Vec::new(),
-        })
+        }
+    }
+
+    /// Return this call spec's target without its encoded arguments.
+    pub fn target(&self) -> CallTarget {
+        CallTarget {
+            package: self.package,
+            module: self.module.clone(),
+            function: self.function.clone(),
+            type_arguments: self.type_arguments.clone(),
+        }
     }
 
     /// Append a type argument derived from a `MoveType`.
@@ -471,8 +529,8 @@ impl CallSpec {
 /// Convenience re-exports for downstream code.
 pub mod prelude {
     pub use crate::{
-        CallArg, CallArgError, CallSpec, CallSpecError, MoveObject, ObjectArg, ReceivingMoveObject,
-        SharedMoveObject, ToCallArg, ToCallArgMut,
+        CallArg, CallArgError, CallSpec, CallSpecError, CallTarget, MoveObject, ObjectArg,
+        ReceivingMoveObject, SharedMoveObject, ToCallArg, ToCallArgMut,
     };
     pub use sui_move::prelude::*;
     pub use sui_sdk_types::Mutability;

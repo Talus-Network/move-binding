@@ -1,11 +1,17 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
-use sui_move_call::{CallArg, CallArgError, CallSpec, ToCallArg};
+use std::borrow::Borrow;
+
+use sui_move_call::{CallArg, CallArgError, CallSpec, CallSpecError, CallTarget, ToCallArg};
 use sui_sdk_types::{
-    Address, Argument, Command, MakeMoveVector, MergeCoins, MoveCall, Mutability,
-    ProgrammableTransaction, Publish, SharedInput, SplitCoins, TransferObjects, TypeTag,
+    Address, Argument, Command, FundsWithdrawal, MakeMoveVector, MergeCoins, MoveCall, Mutability,
+    ObjectReference, Owner, ProgrammableTransaction, Publish, SharedInput, SplitCoins,
+    TransferObjects, TypeTag, WithdrawFrom,
 };
+
+/// Fixed shared object ID for `0x2::clock::Clock`.
+pub const CLOCK_OBJECT_ID: Address = Address::from_static("0x6");
 
 /// Errors that can occur while building a `ProgrammableTransaction`.
 #[derive(thiserror::Error, Debug)]
@@ -13,6 +19,10 @@ pub enum BuildError {
     /// A value could not be converted into a Sui input (typically BCS encoding failed).
     #[error(transparent)]
     CallArg(#[from] CallArgError),
+
+    /// A generated call spec could not be constructed.
+    #[error(transparent)]
+    CallSpec(#[from] CallSpecError),
 
     /// Too many inputs were added (PTB uses `u16` indices).
     #[error("too many PTB inputs (u16 overflow)")]
@@ -29,6 +39,22 @@ pub enum BuildError {
     DuplicateObjectRefInput {
         /// Duplicated object id.
         object_id: Address,
+    },
+
+    /// Ownership metadata cannot be represented as a normal transaction input.
+    #[error("object {object_id} has unsupported owner for transaction input: {owner:?}")]
+    UnsupportedOwner {
+        /// Object id whose owner could not be represented.
+        object_id: Address,
+        /// Unsupported owner metadata returned by Sui.
+        owner: Owner,
+    },
+
+    /// A nested result was requested from an argument that is not a command result.
+    #[error("expected command result argument, got {argument:?}")]
+    ExpectedCommandResult {
+        /// Argument that was expected to be `Argument::Result`.
+        argument: Argument,
     },
 }
 
@@ -183,6 +209,93 @@ impl PtbBuilder {
         self.input(value.to_call_arg()?)
     }
 
+    /// Add pre-encoded BCS bytes as a pure PTB input.
+    ///
+    /// Prefer [`Self::arg`] when the Rust type is available. Use this for dynamic ABI edges where
+    /// the exact Move type is discovered at runtime and the value has already been BCS encoded.
+    pub fn pure_bcs(&mut self, bytes: Vec<u8>) -> Result<Argument, BuildError> {
+        self.input(CallArg::Pure(bytes))
+    }
+
+    /// Add an owned or immutable object reference as a PTB input.
+    pub fn owned_object(&mut self, object: &ObjectReference) -> Result<Argument, BuildError> {
+        self.input(CallArg::ImmutableOrOwned(object.clone()))
+    }
+
+    /// Add a shared object reference as a PTB input.
+    ///
+    /// The object's version is used as the initial shared version. If the same shared object is
+    /// added later with stronger mutability, the existing input is upgraded in place.
+    pub fn shared_object<M: Into<Mutability>>(
+        &mut self,
+        object: &ObjectReference,
+        mutability: M,
+    ) -> Result<Argument, BuildError> {
+        self.shared_object_by_id(*object.object_id(), object.version(), mutability)
+    }
+
+    /// Add a shared object input from its ID and initial shared version.
+    pub fn shared_object_by_id<M: Into<Mutability>>(
+        &mut self,
+        object_id: Address,
+        initial_shared_version: u64,
+        mutability: M,
+    ) -> Result<Argument, BuildError> {
+        self.input(CallArg::Shared(SharedInput::new(
+            object_id,
+            initial_shared_version,
+            mutability,
+        )))
+    }
+
+    /// Add an object input using ownership metadata returned by Sui RPC.
+    ///
+    /// Shared-like objects become `Input::Shared`; immutable/address-owned objects can be used
+    /// only when immutable access was requested.
+    pub fn object_from_owner<O, M>(
+        &mut self,
+        object: &ObjectReference,
+        owner: O,
+        mutability: M,
+    ) -> Result<Argument, BuildError>
+    where
+        O: Borrow<Owner>,
+        M: Into<Mutability>,
+    {
+        let owner = *owner.borrow();
+        let mutability = mutability.into();
+        let object_id = *object.object_id();
+        match owner {
+            Owner::Shared(initial_shared_version) => {
+                self.shared_object_by_id(object_id, initial_shared_version, mutability)
+            }
+            Owner::ConsensusAddress { start_version, .. } => {
+                self.shared_object_by_id(object_id, start_version, mutability)
+            }
+            Owner::Immutable if mutability == Mutability::Immutable => self.owned_object(object),
+            Owner::Address(_) if mutability == Mutability::Immutable => self.owned_object(object),
+            owner => Err(BuildError::UnsupportedOwner { object_id, owner }),
+        }
+    }
+
+    /// Add a coin withdrawn from the transaction sender's SIP-58 address balance.
+    pub fn funds_withdrawal_coin(
+        &mut self,
+        coin_type: TypeTag,
+        amount: u64,
+    ) -> Result<Argument, BuildError> {
+        self.input(CallArg::FundsWithdrawal(FundsWithdrawal::new(
+            amount,
+            coin_type,
+            WithdrawFrom::Sender,
+        )))
+    }
+
+    /// Add the Sui clock object as an immutable shared PTB input.
+    pub fn clock(&mut self) -> Result<Argument, BuildError> {
+        self.shared_object_by_id(CLOCK_OBJECT_ID, 1, Mutability::Immutable)
+    }
+
     /// Add a Move call command from a typed `CallSpec`.
     ///
     /// This consumes the spec, allocates all of its inputs into the PTB input table (reusing
@@ -203,6 +316,27 @@ impl PtbBuilder {
             module: spec.module,
             function: spec.function,
             type_arguments: spec.type_arguments,
+            arguments,
+        }))?;
+
+        Ok(Argument::Result(cmd_idx))
+    }
+
+    /// Add a Move call command from a generated call target and explicit PTB arguments.
+    ///
+    /// Use this for composed PTBs where some arguments are previous command results instead of
+    /// fresh transaction inputs. Generated bindings should still provide the [`CallTarget`], so
+    /// package/module/function/type-argument identity does not fall back to hand-written strings.
+    pub fn call_target(
+        &mut self,
+        target: CallTarget,
+        arguments: Vec<Argument>,
+    ) -> Result<Argument, BuildError> {
+        let cmd_idx = self.push_command(Command::MoveCall(MoveCall {
+            package: target.package,
+            module: target.module,
+            function: target.function,
+            type_arguments: target.type_arguments,
             arguments,
         }))?;
 
@@ -264,6 +398,14 @@ impl PtbBuilder {
         Ok(Argument::Result(cmd_idx))
     }
 
+    /// Build a typed Move `vector<T>` from already-built PTB arguments.
+    pub fn move_vector<T: sui_move::MoveType>(
+        &mut self,
+        elements: Vec<Argument>,
+    ) -> Result<Argument, BuildError> {
+        self.make_move_vector(Some(T::type_tag_static()), elements)
+    }
+
     /// Add a `Publish` command.
     ///
     /// This is a thin wrapper around `sui_sdk_types::Command::Publish`.
@@ -271,12 +413,17 @@ impl PtbBuilder {
         &mut self,
         modules: Vec<Vec<u8>>,
         dependencies: Vec<Address>,
-    ) -> Result<(), BuildError> {
-        self.push_command(Command::Publish(Publish {
+    ) -> Result<Argument, BuildError> {
+        let cmd_idx = self.push_command(Command::Publish(Publish {
             modules,
             dependencies,
         }))?;
-        Ok(())
+        Ok(Argument::Result(cmd_idx))
+    }
+
+    /// Return a nested result argument for a multi-return command.
+    pub fn nested_result(&self, argument: Argument, ix: u16) -> Result<Argument, BuildError> {
+        nested_result(argument, ix)
     }
 
     /// Finish and return the underlying `ProgrammableTransaction`.
@@ -315,6 +462,16 @@ pub fn ptb(
     let mut builder = PtbBuilder::new();
     build(&mut builder)?;
     Ok(builder.finish())
+}
+
+/// Return a nested result argument for a multi-return command.
+///
+/// This is a checked wrapper around [`Argument::nested`] so transaction builders can propagate a
+/// normal [`BuildError`] instead of panicking or unwrapping.
+pub fn nested_result(argument: Argument, ix: u16) -> Result<Argument, BuildError> {
+    argument
+        .nested(ix)
+        .ok_or(BuildError::ExpectedCommandResult { argument })
 }
 
 /// Build a `ProgrammableTransaction` using a scoped `PtbBuilder`.
@@ -365,7 +522,7 @@ macro_rules! ptb {
 
 /// Convenience re-exports for downstream code.
 pub mod prelude {
-    pub use crate::{ptb, BuildError, PtbBuilder};
+    pub use crate::{ptb, BuildError, PtbBuilder, CLOCK_OBJECT_ID};
     pub use sui_move_call::prelude::*;
     pub use sui_sdk_types::{Argument, Command, ProgrammableTransaction};
 }

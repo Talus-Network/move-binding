@@ -24,7 +24,7 @@ pub(crate) fn render_tx_ext(pkg: &NormalizedPackage, opts: &RenderOptions) -> To
         for f in module
             .functions
             .iter()
-            .filter(|f| matches!(f.visibility, Visibility::Public))
+            .filter(|f| matches!(f.visibility, Visibility::Public) || f.is_entry)
         {
             let (trait_method, impl_method) = render_method(module, f, pkg, opts);
             trait_methods.push(trait_method);
@@ -77,7 +77,7 @@ fn render_method(
         .map(|i| format_ident!("T{i}"))
         .collect::<Vec<_>>();
     let fn_generics = type_generics(&type_params);
-    let bounds = type_param_bounds(f, opts.use_aliases);
+    let bounds = super::calls::type_param_bounds(f, pkg, opts.use_aliases);
     let where_clause = where_clause(&bounds);
 
     let (params, args, skipped_tx_context) = render_params_and_args(f, pkg, opts);
@@ -111,7 +111,8 @@ fn render_method(
             -> Result<sui_sdk_types::Argument, sui_move_runtime::Error>
             #where_clause
         {
-            self.call(#call_expr)
+            let spec = #call_expr?;
+            self.call(spec)
         }
     };
 
@@ -214,39 +215,6 @@ fn is_object_type(
             .unwrap_or(false),
         _ => false,
     }
-}
-
-fn type_param_bounds(f: &Function, use_aliases: bool) -> Vec<TokenStream> {
-    let sm = if use_aliases {
-        quote! { sm }
-    } else {
-        quote! { sui_move }
-    };
-
-    f.type_parameters
-        .iter()
-        .enumerate()
-        .map(|(idx, p)| {
-            let ty = format_ident!("T{idx}");
-
-            let base = if p.constraints.contains(&Ability::Key) {
-                quote! { #sm::MoveStruct }
-            } else {
-                quote! { #sm::MoveType }
-            };
-
-            let mut bounds: Vec<TokenStream> = vec![base];
-            for a in &p.constraints {
-                bounds.push(match a {
-                    Ability::Copy => quote! { #sm::HasCopy },
-                    Ability::Drop => quote! { #sm::HasDrop },
-                    Ability::Store => quote! { #sm::HasStore },
-                    Ability::Key => quote! { #sm::HasKey },
-                });
-            }
-            quote! { #ty: #(#bounds)+* }
-        })
-        .collect()
 }
 
 fn where_clause(bounds: &[TokenStream]) -> TokenStream {

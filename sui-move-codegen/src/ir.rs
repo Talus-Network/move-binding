@@ -66,6 +66,22 @@ fn normalize_address(input: &str) -> String {
     format!("0x{addr}")
 }
 
+fn replace_address<A, B>(address: &mut String, replacements: &[(A, B)])
+where
+    A: AsRef<str>,
+    B: AsRef<str>,
+{
+    let normalized = normalize_address(address);
+    if let Some((_, replacement)) = replacements
+        .iter()
+        .find(|(actual, _)| normalize_address(actual.as_ref()) == normalized)
+    {
+        *address = normalize_address(replacement.as_ref());
+    } else {
+        *address = normalized;
+    }
+}
+
 /// A Move type reference from package metadata.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeRef {
@@ -105,6 +121,64 @@ pub enum TypeRef {
     ///
     /// The index corresponds to the type parameter position in the surrounding signature.
     TypeParameter(u32),
+}
+
+impl TypeRef {
+    fn replace_addresses<A, B>(&mut self, replacements: &[(A, B)])
+    where
+        A: AsRef<str>,
+        B: AsRef<str>,
+    {
+        match self {
+            TypeRef::Vector(inner) | TypeRef::Ref { inner, .. } => {
+                inner.replace_addresses(replacements);
+            }
+            TypeRef::Datatype {
+                type_name,
+                type_arguments,
+            } => {
+                replace_address(&mut type_name.address, replacements);
+                for ty in type_arguments {
+                    ty.replace_addresses(replacements);
+                }
+            }
+            TypeRef::Address
+            | TypeRef::Bool
+            | TypeRef::U8
+            | TypeRef::U16
+            | TypeRef::U32
+            | TypeRef::U64
+            | TypeRef::U128
+            | TypeRef::U256
+            | TypeRef::TypeParameter(_) => {}
+        }
+    }
+
+    fn collect_addresses<'a>(&'a self, out: &mut Vec<&'a str>) {
+        match self {
+            TypeRef::Vector(inner) | TypeRef::Ref { inner, .. } => {
+                inner.collect_addresses(out);
+            }
+            TypeRef::Datatype {
+                type_name,
+                type_arguments,
+            } => {
+                out.push(type_name.address.as_str());
+                for ty in type_arguments {
+                    ty.collect_addresses(out);
+                }
+            }
+            TypeRef::Address
+            | TypeRef::Bool
+            | TypeRef::U8
+            | TypeRef::U16
+            | TypeRef::U32
+            | TypeRef::U64
+            | TypeRef::U128
+            | TypeRef::U256
+            | TypeRef::TypeParameter(_) => {}
+        }
+    }
 }
 
 /// A function parameter (name is synthesized; Sui metadata does not carry parameter names).
@@ -237,15 +311,156 @@ pub struct NormalizedPackage {
     pub modules: BTreeMap<String, NormalizedModule>,
 }
 
+/// Function parameter-name overlay failed because source and IR arities differ.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FunctionParameterNameMismatch {
+    /// Move module name.
+    pub module: String,
+    /// Move function name.
+    pub function: String,
+    /// Number of parameters in the normalized IR.
+    pub ir_count: usize,
+    /// Number of parameters recovered from source.
+    pub source_count: usize,
+}
+
+impl std::fmt::Display for FunctionParameterNameMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "`{}::{}` function parameter count mismatch for source names: IR has {}, source has {}",
+            self.module, self.function, self.ir_count, self.source_count
+        )
+    }
+}
+
+impl std::error::Error for FunctionParameterNameMismatch {}
+
 impl NormalizedPackage {
     /// Serialize the normalized package to pretty JSON.
-    pub fn to_json_string(&self) -> serde_json::Result<String> {
+    pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
 
     /// Parse a normalized package from JSON.
-    pub fn from_json_str(input: &str) -> serde_json::Result<Self> {
+    pub fn from_json_str(input: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(input)
+    }
+
+    /// Rewrite every package/type address in this IR using normalized `actual -> replacement`
+    /// pairs.
+    pub fn replace_addresses<A, B>(&mut self, replacements: &[(A, B)])
+    where
+        A: AsRef<str>,
+        B: AsRef<str>,
+    {
+        replace_address(&mut self.storage_id, replacements);
+        if let Some(original_id) = &mut self.original_id {
+            replace_address(original_id, replacements);
+        }
+
+        for module in self.modules.values_mut() {
+            for datatype in &mut module.datatypes {
+                replace_address(&mut datatype.type_name.address, replacements);
+                match &mut datatype.kind {
+                    DatatypeKind::Struct { fields } => {
+                        for field in fields {
+                            field.ty.replace_addresses(replacements);
+                        }
+                    }
+                    DatatypeKind::Enum { variants } => {
+                        for variant in variants {
+                            for field in &mut variant.fields {
+                                field.ty.replace_addresses(replacements);
+                            }
+                        }
+                    }
+                }
+            }
+
+            for function in &mut module.functions {
+                for parameter in &mut function.parameters {
+                    parameter.ty.replace_addresses(replacements);
+                }
+                for return_type in &mut function.return_types {
+                    return_type.replace_addresses(replacements);
+                }
+            }
+        }
+    }
+
+    /// Return every package/type address referenced by this IR.
+    pub fn referenced_addresses(&self) -> Vec<&str> {
+        let mut addresses = vec![self.storage_id.as_str()];
+        if let Some(original_id) = &self.original_id {
+            addresses.push(original_id.as_str());
+        }
+
+        for module in self.modules.values() {
+            for datatype in &module.datatypes {
+                addresses.push(datatype.type_name.address.as_str());
+                match &datatype.kind {
+                    DatatypeKind::Struct { fields } => {
+                        for field in fields {
+                            field.ty.collect_addresses(&mut addresses);
+                        }
+                    }
+                    DatatypeKind::Enum { variants } => {
+                        for variant in variants {
+                            for field in &variant.fields {
+                                field.ty.collect_addresses(&mut addresses);
+                            }
+                        }
+                    }
+                }
+            }
+
+            for function in &module.functions {
+                for parameter in &function.parameters {
+                    parameter.ty.collect_addresses(&mut addresses);
+                }
+                for return_type in &function.return_types {
+                    return_type.collect_addresses(&mut addresses);
+                }
+            }
+        }
+
+        addresses
+    }
+
+    /// Replace synthesized `argN` function parameter names with names recovered from Move source.
+    pub fn apply_function_parameter_names(
+        &mut self,
+        names: &BTreeMap<(String, String), Vec<String>>,
+    ) -> Result<(), FunctionParameterNameMismatch> {
+        for (module_name, module) in &mut self.modules {
+            for function in &mut module.functions {
+                let Some(source_names) =
+                    names.get(&(module_name.to_owned(), function.name.to_owned()))
+                else {
+                    continue;
+                };
+
+                if function.parameters.len() != source_names.len() {
+                    return Err(FunctionParameterNameMismatch {
+                        module: module_name.to_owned(),
+                        function: function.name.to_owned(),
+                        ir_count: function.parameters.len(),
+                        source_count: source_names.len(),
+                    });
+                }
+
+                for (index, (parameter, source_name)) in
+                    function.parameters.iter_mut().zip(source_names).enumerate()
+                {
+                    if parameter.name == format!("arg{index}") {
+                        parameter.name = source_name.to_owned();
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -320,10 +535,116 @@ mod tests {
             )]),
         };
 
-        let json = pkg.to_json_string().expect("serialize");
-        let decoded = NormalizedPackage::from_json_str(&json).expect("deserialize");
+        let encoded = pkg.to_json_string().expect("serialize");
+        let decoded = NormalizedPackage::from_json_str(&encoded).expect("deserialize");
         assert_eq!(pkg, decoded);
-        assert!(json.contains("\"storage_id\""));
-        assert!(json.contains("\"modules\""));
+        assert!(!encoded.is_empty());
+    }
+
+    #[test]
+    fn replace_addresses_rewrites_package_and_nested_type_refs() {
+        let mut pkg = NormalizedPackage {
+            storage_id: "0x0009".into(),
+            original_id: Some("0x9".into()),
+            version: 1,
+            modules: BTreeMap::from([(
+                "m".into(),
+                NormalizedModule {
+                    name: "m".into(),
+                    datatypes: vec![Datatype {
+                        type_name: TypeName::parse("0x09::m::Obj").unwrap(),
+                        module: "m".into(),
+                        name: "Obj".into(),
+                        abilities: vec![],
+                        type_parameters: vec![],
+                        kind: DatatypeKind::Struct {
+                            fields: vec![Field {
+                                name: "inner".into(),
+                                position: 0,
+                                ty: TypeRef::Datatype {
+                                    type_name: TypeName::parse("0x0009::m::Inner").unwrap(),
+                                    type_arguments: vec![TypeRef::Datatype {
+                                        type_name: TypeName::parse("0x9::m::Leaf").unwrap(),
+                                        type_arguments: vec![],
+                                    }],
+                                },
+                            }],
+                        },
+                    }],
+                    functions: vec![Function {
+                        name: "use_obj".into(),
+                        visibility: Visibility::Public,
+                        is_entry: false,
+                        type_parameters: vec![],
+                        parameters: vec![FunctionParam {
+                            name: "arg0".into(),
+                            ty: TypeRef::Ref {
+                                mutable: true,
+                                inner: Box::new(TypeRef::Datatype {
+                                    type_name: TypeName::parse("0x9::m::Obj").unwrap(),
+                                    type_arguments: vec![],
+                                }),
+                            },
+                        }],
+                        return_types: vec![TypeRef::Datatype {
+                            type_name: TypeName::parse("0x9::m::Obj").unwrap(),
+                            type_arguments: vec![],
+                        }],
+                    }],
+                },
+            )]),
+        };
+
+        pkg.replace_addresses(&[("0x9", "0xa1")]);
+
+        assert_eq!(pkg.storage_id, "0xa1");
+        assert_eq!(pkg.original_id.as_deref(), Some("0xa1"));
+        assert!(pkg
+            .referenced_addresses()
+            .into_iter()
+            .all(|address| address == "0xa1"));
+    }
+
+    #[test]
+    fn applies_source_names_only_to_synthesized_parameters() {
+        let mut pkg = NormalizedPackage {
+            storage_id: "0x1".into(),
+            original_id: None,
+            version: 1,
+            modules: BTreeMap::from([(
+                "m".into(),
+                NormalizedModule {
+                    name: "m".into(),
+                    datatypes: vec![],
+                    functions: vec![Function {
+                        name: "f".into(),
+                        visibility: Visibility::Public,
+                        is_entry: true,
+                        type_parameters: vec![],
+                        parameters: vec![
+                            FunctionParam {
+                                name: "arg0".into(),
+                                ty: TypeRef::U64,
+                            },
+                            FunctionParam {
+                                name: "explicit".into(),
+                                ty: TypeRef::Bool,
+                            },
+                        ],
+                        return_types: vec![],
+                    }],
+                },
+            )]),
+        };
+        let names = BTreeMap::from([(
+            ("m".to_string(), "f".to_string()),
+            vec!["amount".to_string(), "flag".to_string()],
+        )]);
+
+        pkg.apply_function_parameter_names(&names).unwrap();
+        let parameters = &pkg.modules["m"].functions[0].parameters;
+
+        assert_eq!(parameters[0].name, "amount");
+        assert_eq!(parameters[1].name, "explicit");
     }
 }

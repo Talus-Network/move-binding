@@ -4,6 +4,7 @@
 //! See `README.md` for the crate-level overview.
 
 mod source;
+mod source_names;
 
 /// Normalized, serde-friendly package IR.
 pub mod ir;
@@ -12,6 +13,10 @@ pub mod ir;
 pub mod render;
 
 pub use crate::source::fetch_package;
+pub use crate::source_names::{
+    apply_function_parameter_names_from_sources, function_parameter_names_from_sources,
+    SourceNameError,
+};
 
 /// Sui gRPC client used by package metadata fetching.
 pub type GrpcClient = sui_rpc::Client;
