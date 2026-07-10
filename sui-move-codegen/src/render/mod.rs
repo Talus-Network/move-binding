@@ -764,6 +764,14 @@ mod tests {
     }
 
     #[test]
+    fn generated_calls_keep_network_parameter_names_by_default() {
+        let code = render_package(&demo_pkg(), &RenderOptions::default());
+
+        assert!(code.contains("arg0: &mut impl sm_call::ObjectArg<Obj>"));
+        assert!(code.contains("spec.push_arg_mut(arg0)?;"));
+    }
+
+    #[test]
     fn generated_calls_use_move_parameter_names() {
         let package = named_parameter_pkg(&["amount", "type", "self", "_"]);
         let code = render_package(&package, &RenderOptions::default());

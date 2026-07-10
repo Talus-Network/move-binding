@@ -58,6 +58,10 @@ pub enum SourceNameError {
 ///
 /// `source_dir` is the package `sources/` directory. Missing directories are treated as empty so
 /// callers can invoke this uniformly for packages that may not have local sources.
+///
+/// This changes names only and does not verify source against published bytecode. Package identity,
+/// function signatures, and types remain unchanged. Names are applied through
+/// [`NormalizedPackage::apply_function_parameter_names`], which rejects parameter count mismatches.
 pub fn apply_function_parameter_names_from_sources(
     package: &mut NormalizedPackage,
     source_dir: impl AsRef<Path>,

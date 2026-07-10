@@ -36,6 +36,33 @@ The pipeline is intentionally split in two:
 Because the IR is JSON-serializable, you can commit it and re-render deterministically in CI without
 needing network access.
 
+### Optional source parameter names
+
+Sui package metadata contains function parameter types but not their source names. Network fetched
+IR therefore uses deterministic names such as `arg0` and `arg1` by default.
+
+Callers that own matching Move source can overlay parameter names before saving or rendering the
+IR:
+
+```rust,no_run
+use sui_move_codegen::{apply_function_parameter_names_from_sources, fetch_package, GrpcClient};
+use sui_sdk_types::Address;
+
+# async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+let mut client = GrpcClient::new(GrpcClient::MAINNET_FULLNODE)?;
+let package_id: Address = "0x2".parse()?;
+let mut package = fetch_package(&mut client, package_id).await?;
+
+apply_function_parameter_names_from_sources(&mut package, "path/to/package/sources")?;
+# Ok(())
+# }
+```
+
+The overlay changes names only. Package identity, function signatures, types, and abilities remain
+network derived. The source is trusted metadata and is not verified against published bytecode.
+Source and network parameter counts must match. Rust rendering preserves source spelling in Move
+documentation and converts reserved Rust identifiers safely in generated APIs.
+
 ## What gets generated
 
 Given a `NormalizedPackage` (either fetched from gRPC or loaded from JSON), this crate can render:
