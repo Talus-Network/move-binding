@@ -135,15 +135,14 @@ fn render_params_and_pushes(
 
     let mut params = Vec::new();
     let mut pushes = Vec::new();
-    let mut arg_idx: usize = 0;
+    let mut parameter_idents = idents::ParameterIdents::default();
 
-    for p in &f.parameters {
+    for (index, p) in f.parameters.iter().enumerate() {
         if is_tx_context(&p.ty) {
             continue;
         }
 
-        let arg_ident = format_ident!("arg{arg_idx}");
-        arg_idx += 1;
+        let arg_ident = parameter_idents.next(&p.name, index);
         let (ref_mutable, inner) = split_ref(&p.ty);
 
         let is_object = is_object_type(inner, f, pkg, opts);
@@ -486,8 +485,7 @@ fn move_signature_string(module: &NormalizedModule, f: &Function) -> String {
     let params = f
         .parameters
         .iter()
-        .enumerate()
-        .map(|(idx, p)| format!("arg{idx}: {}", move_type_string(&p.ty)))
+        .map(|p| format!("{}: {}", p.name, move_type_string(&p.ty)))
         .collect::<Vec<_>>()
         .join(", ");
 

@@ -181,10 +181,14 @@ impl TypeRef {
     }
 }
 
-/// A function parameter (name is synthesized; Sui metadata does not carry parameter names).
+/// A function parameter.
+///
+/// Sui package metadata does not contain source parameter names, so [`crate::fetch_package`]
+/// assigns `argN`. Callers that own matching Move source can apply names with
+/// [`crate::apply_function_parameter_names_from_sources`] before rendering.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionParam {
-    /// Parameter name (`arg0`, `arg1`, ...).
+    /// Parameter name, or `argN` when source names have not been applied.
     pub name: String,
     /// Parameter type.
     pub ty: TypeRef,

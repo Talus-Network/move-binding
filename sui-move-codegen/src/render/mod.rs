@@ -432,6 +432,35 @@ mod tests {
         }
     }
 
+    fn named_parameter_pkg(names: &[&str]) -> NormalizedPackage {
+        NormalizedPackage {
+            storage_id: "0x1".into(),
+            original_id: None,
+            version: 0,
+            modules: BTreeMap::from([(
+                "m".into(),
+                NormalizedModule {
+                    name: "m".into(),
+                    datatypes: vec![],
+                    functions: vec![Function {
+                        name: "named".into(),
+                        visibility: Visibility::Public,
+                        is_entry: true,
+                        type_parameters: vec![],
+                        parameters: names
+                            .iter()
+                            .map(|name| FunctionParam {
+                                name: (*name).into(),
+                                ty: TypeRef::U64,
+                            })
+                            .collect(),
+                        return_types: vec![],
+                    }],
+                },
+            )]),
+        }
+    }
+
     fn option_pkg() -> NormalizedPackage {
         NormalizedPackage {
             storage_id: "0x1".into(),
@@ -735,6 +764,34 @@ mod tests {
     }
 
     #[test]
+    fn generated_calls_use_move_parameter_names() {
+        let package = named_parameter_pkg(&["amount", "type", "self", "_"]);
+        let code = render_package(&package, &RenderOptions::default());
+
+        assert!(code.contains("pub fn named("));
+        assert!(code.contains("amount: u64,"));
+        assert!(code.contains("r#type: u64,"));
+        assert!(code.contains("self_: u64,"));
+        assert!(code.contains("arg3: u64,"));
+        assert!(code.contains("spec.push_arg(&amount)?;"));
+        assert!(code.contains("spec.push_arg(&r#type)?;"));
+        assert!(code.contains("spec.push_arg(&self_)?;"));
+        assert!(code.contains("spec.push_arg(&arg3)?;"));
+        assert!(code.contains("named(amount: u64, type: u64, self: u64, _: u64)"));
+    }
+
+    #[test]
+    fn generated_parameter_names_remain_unique_after_rust_conversion() {
+        let package = named_parameter_pkg(&["self", "self_", "arg1"]);
+        let code = render_package(&package, &RenderOptions::default());
+
+        assert!(code.contains("pub fn named("));
+        assert!(code.contains("spec.push_arg(&self_)?;"));
+        assert!(code.contains("spec.push_arg(&arg1)?;"));
+        assert!(code.contains("spec.push_arg(&arg2)?;"));
+    }
+
+    #[test]
     fn generated_calls_can_emit_targets_without_call_specs() {
         let opts = RenderOptions {
             emit_call_specs: false,
@@ -951,6 +1008,22 @@ mod tests {
         assert!(code.contains("impl<'a, S> TxExt for sui_move_runtime::Tx<'a, S>"));
         assert!(code.contains("let spec = m::mutate"));
         assert!(code.contains("self.call(spec)"));
+    }
+
+    #[test]
+    fn rendered_tx_ext_uses_move_parameter_names() {
+        let package = named_parameter_pkg(&["amount", "type", "self"]);
+        let opts = RenderOptions {
+            emit_tx_ext: true,
+            ..RenderOptions::default()
+        };
+        let code = render_package(&package, &opts);
+
+        assert!(code.contains("fn m__named("));
+        assert!(code.contains("amount: u64,"));
+        assert!(code.contains("r#type: u64,"));
+        assert!(code.contains("self_: u64,"));
+        assert!(code.contains("let spec = m::named("));
     }
 
     #[test]
