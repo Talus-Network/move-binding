@@ -1,6 +1,33 @@
 //! Identifier helpers for rendering Rust code.
 
+use std::collections::BTreeSet;
+
 use syn::Ident;
+
+#[derive(Default)]
+pub(crate) struct ParameterIdents {
+    used: BTreeSet<String>,
+}
+
+impl ParameterIdents {
+    pub(crate) fn next(&mut self, name: &str, index: usize) -> Ident {
+        let mut candidate = match name {
+            "_" => format!("arg{index}"),
+            "crate" | "self" | "Self" | "super" => format!("{name}_"),
+            _ => name.to_owned(),
+        };
+
+        if self.used.contains(&candidate) {
+            candidate = format!("arg{index}");
+            while self.used.contains(&candidate) {
+                candidate.push('_');
+            }
+        }
+
+        self.used.insert(candidate.clone());
+        ident(&candidate)
+    }
+}
 
 /// Turn a Move identifier into a valid Rust identifier.
 ///

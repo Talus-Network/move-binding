@@ -121,13 +121,23 @@ fn builds_raw_bcs_inputs_funds_withdrawals_and_typed_vectors() {
     let vector = tx.move_vector::<u64>(vec![amount]).unwrap();
 
     assert_eq!(raw, Argument::Input(0));
-    assert_eq!(coin, Argument::Input(2));
-    assert_eq!(vector, Argument::Result(0));
+    assert_eq!(coin, Argument::Result(0));
+    assert_eq!(vector, Argument::Result(1));
 
     let pt = tx.finish();
     assert!(matches!(pt.inputs[0], CallArg::Pure(_)));
     assert!(matches!(pt.inputs[2], CallArg::FundsWithdrawal(_)));
-    assert!(matches!(pt.commands[0], Command::MakeMoveVector(_)));
+    match &pt.commands[0] {
+        Command::MoveCall(call) => {
+            assert_eq!(call.package, Address::from_static("0x2"));
+            assert_eq!(call.module.as_str(), "coin");
+            assert_eq!(call.function.as_str(), "redeem_funds");
+            assert_eq!(call.type_arguments, vec![TypeTag::U64]);
+            assert_eq!(call.arguments, vec![Argument::Input(2)]);
+        }
+        command => panic!("expected redeem_funds call, got {command:?}"),
+    }
+    assert!(matches!(pt.commands[1], Command::MakeMoveVector(_)));
 }
 
 #[test]

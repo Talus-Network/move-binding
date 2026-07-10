@@ -31,24 +31,53 @@ mod builtins;
 pub mod decode;
 pub use decode::{decode_copyable, decode_keyed, decode_storable};
 
-/// Move `u256` value represented as 32 little-endian bytes.
+/// Move `u256` value backed by [`ethnum::U256`].
 ///
-/// This intentionally keeps arithmetic out of `sui-move`; the type exists so generated bindings
-/// can carry, serialize, and type-tag Move `u256` values without inventing package-specific
-/// representations.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct U256([u8; 32]);
+/// Serialization uses the 32 byte little endian representation required by Move rather than the
+/// hexadecimal string representation provided by `ethnum`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct U256(pub ethnum::U256);
 
 impl U256 {
-    /// Construct a `u256` from its little-endian byte representation.
-    pub const fn from_le_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
+    /// Construct a `u256` from its little endian byte representation.
+    pub fn from_le_bytes(bytes: [u8; 32]) -> Self {
+        Self(ethnum::U256::from_le_bytes(bytes))
     }
 
-    /// Return the little-endian byte representation.
-    pub const fn to_le_bytes(self) -> [u8; 32] {
-        self.0
+    /// Return the little endian byte representation.
+    pub fn to_le_bytes(self) -> [u8; 32] {
+        self.0.to_le_bytes()
+    }
+}
+
+impl From<ethnum::U256> for U256 {
+    fn from(value: ethnum::U256) -> Self {
+        Self(value)
+    }
+}
+
+impl From<U256> for ethnum::U256 {
+    fn from(value: U256) -> Self {
+        value.0
+    }
+}
+
+impl Serialize for U256 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.to_le_bytes().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for U256 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        <[u8; 32]>::deserialize(deserializer).map(Self::from_le_bytes)
     }
 }
 

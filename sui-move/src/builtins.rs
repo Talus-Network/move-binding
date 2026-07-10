@@ -64,9 +64,12 @@ mod tests {
 
     #[test]
     fn u256_has_move_type_tag_and_fixed_width_bcs() {
-        let value = crate::U256::from_le_bytes([7u8; 32]);
+        let integer = ethnum::U256::from_le_bytes([7u8; 32]);
+        let value = crate::U256::from(integer);
 
         assert_eq!(crate::U256::type_tag_static(), sui_sdk_types::TypeTag::U256);
-        assert_eq!(bcs::to_bytes(&value).unwrap().len(), 32);
+        assert_eq!(bcs::to_bytes(&value).unwrap(), vec![7u8; 32]);
+        assert_eq!(bcs::from_bytes::<crate::U256>(&[7u8; 32]).unwrap(), value);
+        assert_eq!(ethnum::U256::from(value), integer);
     }
 }
