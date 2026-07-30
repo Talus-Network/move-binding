@@ -104,7 +104,7 @@ pub(crate) fn render_module_file(
 
     quote! {
         #aliases
-        use super::{call_package, type_package};
+        use super::{call_package, type_package_for};
         #(#items)*
     }
 }
@@ -136,7 +136,7 @@ pub(crate) fn render_module(
         quote! {
             pub mod #module_ident {
                 #aliases
-                use super::{call_package, type_package};
+                use super::{call_package, type_package_for};
                 #(#items)*
             }
         }
@@ -164,11 +164,26 @@ fn package_scope_tokens(opts: &RenderOptions) -> TokenStream {
     let _ = opts;
     let address_ty = quote! { sui_move::prelude::Address };
     quote! {
+        /// Exact datatype origins grouped by module and datatype name.
+        pub type TypeOrigins = std::collections::BTreeMap<
+            String,
+            std::collections::BTreeMap<String, #address_ty>,
+        >;
+
+        /// Scoped datatype identity for one generated package.
+        ///
+        /// A single package address cannot represent datatypes introduced by
+        /// different versions of the same Sui package.
+        struct TypeScope {
+            fallback: #address_ty,
+            origins: TypeOrigins,
+        }
+
         std::thread_local! {
             static CALL_PACKAGE_OVERRIDE: std::cell::Cell<Option<#address_ty>> =
                 std::cell::Cell::new(None);
-            static TYPE_PACKAGE_OVERRIDE: std::cell::Cell<Option<#address_ty>> =
-                std::cell::Cell::new(None);
+            static TYPE_SCOPE_OVERRIDE: std::cell::RefCell<Option<TypeScope>> =
+                const { std::cell::RefCell::new(None) };
         }
 
         /// Current call package address for this generated binding.
@@ -184,7 +199,30 @@ fn package_scope_tokens(opts: &RenderOptions) -> TokenStream {
         /// Returns the scoped override set by [`with_type_package`] or [`with_packages`], or
         /// [`TYPE_PACKAGE`] when no override is active.
         pub fn type_package() -> #address_ty {
-            TYPE_PACKAGE_OVERRIDE.with(|slot| slot.get().unwrap_or(TYPE_PACKAGE))
+            TYPE_SCOPE_OVERRIDE.with(|slot| {
+                slot.borrow()
+                    .as_ref()
+                    .map(|scope| scope.fallback)
+                    .unwrap_or(TYPE_PACKAGE)
+            })
+        }
+
+        /// Resolve the defining package for one Move datatype.
+        ///
+        /// The exact origin set by [`with_type_origins`] takes precedence over
+        /// the current fallback returned by [`type_package`].
+        pub fn type_package_for(module: &str, datatype: &str) -> #address_ty {
+            TYPE_SCOPE_OVERRIDE.with(|slot| {
+                let scope = slot.borrow();
+                let Some(scope) = scope.as_ref() else {
+                    return TYPE_PACKAGE;
+                };
+                scope.origins
+                    .get(module)
+                    .and_then(|datatypes| datatypes.get(datatype))
+                    .copied()
+                    .unwrap_or(scope.fallback)
+            })
         }
 
         /// Run a closure with this generated binding scoped to `package` for Move calls.
@@ -212,18 +250,32 @@ fn package_scope_tokens(opts: &RenderOptions) -> TokenStream {
         ///
         /// The previous type package override is restored when the closure returns or unwinds.
         pub fn with_type_package<R>(package: #address_ty, f: impl FnOnce() -> R) -> R {
-            struct Reset(Option<#address_ty>);
+            with_type_origins(package, &TypeOrigins::new(), f)
+        }
+
+        /// Run a closure with a fallback package and exact datatype origins.
+        ///
+        /// The previous type scope is restored when the closure returns or unwinds.
+        pub fn with_type_origins<R>(
+            fallback: #address_ty,
+            origins: &TypeOrigins,
+            f: impl FnOnce() -> R,
+        ) -> R {
+            struct Reset(Option<TypeScope>);
 
             impl Drop for Reset {
                 fn drop(&mut self) {
-                    TYPE_PACKAGE_OVERRIDE.with(|slot| slot.set(self.0));
+                    TYPE_SCOPE_OVERRIDE.with(|slot| {
+                        slot.replace(self.0.take());
+                    });
                 }
             }
 
-            let previous = TYPE_PACKAGE_OVERRIDE.with(|slot| {
-                let previous = slot.get();
-                slot.set(Some(package));
-                previous
+            let previous = TYPE_SCOPE_OVERRIDE.with(|slot| {
+                slot.replace(Some(TypeScope {
+                    fallback,
+                    origins: origins.clone(),
+                }))
             });
             let _reset = Reset(previous);
             f()
@@ -239,6 +291,21 @@ fn package_scope_tokens(opts: &RenderOptions) -> TokenStream {
             f: impl FnOnce() -> R,
         ) -> R {
             with_call_package(call_package, || with_type_package(type_package, f))
+        }
+
+        /// Run a closure with the current call package and exact datatype origins.
+        ///
+        /// Use this when one package contains datatypes introduced by several
+        /// package versions.
+        pub fn with_package_context<R>(
+            call_package: #address_ty,
+            fallback_type_package: #address_ty,
+            origins: &TypeOrigins,
+            f: impl FnOnce() -> R,
+        ) -> R {
+            with_call_package(call_package, || {
+                with_type_origins(fallback_type_package, origins, f)
+            })
         }
     }
 }

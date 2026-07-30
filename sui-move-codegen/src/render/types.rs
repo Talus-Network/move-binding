@@ -20,15 +20,35 @@ pub(crate) fn render_datatype(
     pkg: &NormalizedPackage,
     opts: &RenderOptions,
 ) -> TokenStream {
+    let address_function = render_datatype_address_function(dt);
     let datatype = match &dt.kind {
         DatatypeKind::Struct { fields } => render_struct(dt, fields, pkg, opts),
         DatatypeKind::Enum { variants } => render_enum(dt, variants, pkg, opts),
     };
     let helpers = render_canonical_helpers(dt, pkg, opts);
     quote! {
+        #address_function
         #datatype
         #helpers
     }
+}
+
+fn render_datatype_address_function(dt: &Datatype) -> TokenStream {
+    let function = datatype_address_function_ident(dt);
+    let module = syn::LitStr::new(&dt.type_name.module, proc_macro2::Span::call_site());
+    let datatype = syn::LitStr::new(&dt.type_name.name, proc_macro2::Span::call_site());
+
+    quote! {
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        fn #function() -> sui_move::prelude::Address {
+            type_package_for(#module, #datatype)
+        }
+    }
+}
+
+fn datatype_address_function_ident(dt: &Datatype) -> syn::Ident {
+    format_ident!("__type_package_for_{}", dt.name)
 }
 
 pub(crate) fn render_type_ref_in_module(
@@ -89,11 +109,10 @@ fn render_struct(
     let abilities_arg = abilities_lit.map(|lit| quote! { abilities = #lit, });
     let phantoms_arg = phantoms_lit.map(|lit| quote! { phantoms = #lit, });
     let type_abilities_arg = type_abilities_lit.map(|lit| quote! { type_abilities = #lit, });
-    let address_fn = if opts.flatten {
-        syn::LitStr::new("type_package", proc_macro2::Span::call_site())
-    } else {
-        syn::LitStr::new("super::type_package", proc_macro2::Span::call_site())
-    };
+    let address_fn = syn::LitStr::new(
+        &datatype_address_function_ident(dt).to_string(),
+        proc_macro2::Span::call_site(),
+    );
 
     let fields_tokens = fields.iter().map(|f| {
         let ident = idents::ident(&f.name);
@@ -973,6 +992,7 @@ fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool) -> TokenStream {
 
     let module = syn::LitStr::new(&dt.type_name.module, proc_macro2::Span::call_site());
     let name = syn::LitStr::new(&dt.type_name.name, proc_macro2::Span::call_site());
+    let address_function = datatype_address_function_ident(dt);
 
     let type_params = type_params_idents(dt.type_parameters.len());
     let ty_params_for_tag = type_params
@@ -981,7 +1001,7 @@ fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool) -> TokenStream {
 
     quote! {
         #sm::__private::sui_sdk_types::StructTag::new(
-            type_package(),
+            #address_function(),
             #sm::parse_identifier(#module).expect("invalid module"),
             #sm::parse_identifier(#name).expect("invalid struct name"),
             vec![#(#ty_params_for_tag),*],
