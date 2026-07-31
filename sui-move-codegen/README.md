@@ -105,7 +105,9 @@ bindings::with_packages(localnet_package, localnet_package, || {
 
 An upgraded package can contain datatypes that originate in different package versions. Calls must
 target the current package, while each type tag must retain the package where that datatype was
-first defined. Use `with_package_context` when a release has more than one datatype origin:
+first defined. Generated call builders resolve their target through `call_package()`, and each
+generated datatype resolves its type identity through `type_package_for(module, datatype)`. Use
+`with_package_context` to scope both lookups to one release:
 
 ```rust
 # use std::collections::BTreeMap;
@@ -114,19 +116,59 @@ first defined. Use `with_package_context` when a release has more than one datat
 #     use std::collections::BTreeMap;
 #     use sui_sdk_types::Address;
 #     pub type TypeOrigins = BTreeMap<String, BTreeMap<String, Address>>;
+#     #[derive(Clone)]
+#     struct PackageContext {
+#         call_package: Address,
+#         fallback_type_package: Address,
+#         origins: TypeOrigins,
+#     }
+#     std::thread_local! {
+#         static CONTEXT: std::cell::RefCell<Option<PackageContext>> =
+#             const { std::cell::RefCell::new(None) };
+#     }
 #     pub fn with_package_context<R>(
-#         _call_package: Address,
-#         _fallback_type_package: Address,
-#         _origins: &TypeOrigins,
+#         call_package: Address,
+#         fallback_type_package: Address,
+#         origins: &TypeOrigins,
 #         f: impl FnOnce() -> R,
-#     ) -> R { f() }
-#     pub mod agent {
-#         pub fn create() {}
+#     ) -> R {
+#         struct Reset(Option<PackageContext>);
+#         impl Drop for Reset {
+#             fn drop(&mut self) {
+#                 CONTEXT.with(|slot| {
+#                     slot.replace(self.0.take());
+#                 });
+#             }
+#         }
+#         let previous = CONTEXT.with(|slot| {
+#             slot.replace(Some(PackageContext {
+#                 call_package,
+#                 fallback_type_package,
+#                 origins: origins.clone(),
+#             }))
+#         });
+#         let _reset = Reset(previous);
+#         f()
+#     }
+#     pub fn call_package() -> Address {
+#         CONTEXT.with(|slot| slot.borrow().as_ref().unwrap().call_package)
+#     }
+#     pub fn type_package_for(module: &str, datatype: &str) -> Address {
+#         CONTEXT.with(|slot| {
+#             let context = slot.borrow();
+#             let context = context.as_ref().unwrap();
+#             context
+#                 .origins
+#                 .get(module)
+#                 .and_then(|datatypes| datatypes.get(datatype))
+#                 .copied()
+#                 .unwrap_or(context.fallback_type_package)
+#         })
 #     }
 # }
-# let current_package = Address::ZERO;
-# let initial_package = Address::ZERO;
-# let upgraded_package = Address::ZERO;
+let initial_package = Address::from_static("0xa1");
+let upgraded_package = Address::from_static("0xa2");
+let current_package = Address::from_static("0xa3");
 let origins = BTreeMap::from([(
     "agent".to_owned(),
     BTreeMap::from([
@@ -135,9 +177,18 @@ let origins = BTreeMap::from([(
     ]),
 )]);
 
-bindings::with_package_context(current_package, initial_package, &origins, || {
-    bindings::agent::create();
-});
+let (call_package, agent_type_package, state_v2_type_package) =
+    bindings::with_package_context(current_package, initial_package, &origins, || {
+        (
+            bindings::call_package(),
+            bindings::type_package_for("agent", "Agent"),
+            bindings::type_package_for("agent", "AgentStateV2"),
+        )
+    });
+
+assert_eq!(call_package, current_package);
+assert_eq!(agent_type_package, initial_package);
+assert_eq!(state_v2_type_package, upgraded_package);
 ```
 
 ## Example: render from an in-memory IR
