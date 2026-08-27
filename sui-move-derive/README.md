@@ -1,18 +1,15 @@
 # talus-sui-move-derive
 
 Procedural macros for [`talus-sui-move`](https://docs.rs/talus-sui-move): define Rust types that
-represent Move types with minimal boilerplate. The package is `talus-sui-move-derive`; Rust code
-imports it as `talus_sui_move_derive`.
+represent Move types with minimal boilerplate.
 
 This crate exists to solve one problem: **turn a Rust struct into a representation of a Move type**
 with the correct `TypeTag`, `StructTag`, and ability markers. It can then use the type tag plumbing
 and verified decoding in `talus-sui-move`.
 
-## Where it fits
+## Relationship to `talus-sui-move`
 
-In the repository’s layered
-[stack](https://github.com/Talus-Network/move-binding/blob/main/MODEL.md),
-`talus-sui-move-derive` is a convenience layer for the bottom type system (`talus-sui-move`):
+`talus-sui-move-derive` is the optional procedural macro companion to `talus-sui-move`:
 
 - you describe the Move identity (`address`, `module`, `abilities`) as attributes,
 - the macro generates the corresponding `talus_sui_move::MoveType` / `talus_sui_move::MoveStruct` impls and
@@ -57,7 +54,7 @@ Most users should depend on `talus-sui-move` and enable its `derive` feature, wh
 
 ```toml
 [dependencies]
-talus-sui-move = { version = "=0.2.0-rc.1", features = ["derive"] }
+talus-sui-move = { version = "=0.2.0", features = ["derive"] }
 ```
 
 Then use:
@@ -172,12 +169,17 @@ pub struct MissingId {
 Similarly, invalid ability combinations are rejected:
 
 ```rust,compile_fail
+use talus_sui_move::prelude::Address;
 use talus_sui_move_derive::move_struct;
 
-/// Minimal UID fixture defined by a package for the compilation failure example.
+#[move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+pub struct ID {
+    pub bytes: Address,
+}
+
 #[move_struct(address = "0x2", module = "object", abilities = "store")]
 pub struct UID {
-    pub id: u64,
+    pub id: ID,
 }
 
 // A struct cannot be both `key` and `copy`.

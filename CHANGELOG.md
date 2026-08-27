@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-27
+
+### Changed
+
+- Correct crate documentation and examples for the stable release.
+
 ## [0.2.0-rc.1] - 2026-08-27
 
 ### Added
@@ -29,12 +35,11 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
-- Publish the workspace under the `talus-sui-move-*` crates.io package names owned by Talus and use
-  the matching `talus_sui_move*` Rust library names.
 - Generated package scopes now resolve type identity by module and datatype while calls continue to
   use the current package address.
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
-[Unreleased]: https://github.com/Talus-Network/move-binding/compare/v0.2.0-rc.1...HEAD
+[Unreleased]: https://github.com/Talus-Network/move-binding/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Talus-Network/move-binding/compare/v0.2.0-rc.1...v0.2.0
 [0.2.0-rc.1]: https://github.com/Talus-Network/move-binding/compare/v0.1.0...v0.2.0-rc.1

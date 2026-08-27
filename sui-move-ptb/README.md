@@ -2,13 +2,11 @@
 
 Programmable transaction building blocks for typed Move calls on Sui.
 
-The crates.io package is `talus-sui-move-ptb`; Rust code imports it as `talus_sui_move_ptb`.
+This crate uses [`talus-sui-move-call`](https://docs.rs/talus-sui-move-call) and solves one
+problem: **turn typed Move call descriptions into a
+`sui_sdk_types::ProgrammableTransaction`** while hiding input/argument indexing.
 
-This crate sits on top of [`talus-sui-move-call`](https://docs.rs/talus-sui-move-call) and solves one problem:
-**turn typed Move call descriptions into a `sui_sdk_types::ProgrammableTransaction`** while
-hiding input/argument indexing.
-
-## Where it fits
+## Relationship to the other crates
 
 - `talus-sui-move`: Rust representations of Move types (`MoveType`, `MoveStruct`, abilities)
 - `talus-sui-move-call`: typed call descriptions (`CallSpec`, typed input wrappers)
@@ -73,9 +71,14 @@ use talus_sui_move_call::{CallSpec, MoveObject};
 use talus_sui_move_ptb::ptb;
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+struct ID {
+    bytes: Address,
+}
+
 #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
-    id: u64,
+    id: ID,
 }
 
 #[talus_sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
@@ -115,9 +118,14 @@ use talus_sui_move_call::{CallSpec, MoveObject};
 use talus_sui_move_ptb::ptb;
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+struct ID {
+    bytes: Address,
+}
+
 #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
-    id: u64,
+    id: ID,
 }
 
 #[talus_sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
@@ -160,9 +168,14 @@ use talus_sui_move_call::{CallArg, SharedMoveObject};
 use talus_sui_move_ptb::PtbBuilder;
 use sui_sdk_types::{Address, Argument, Mutability};
 
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+struct ID {
+    bytes: Address,
+}
+
 #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
-    id: u64,
+    id: ID,
 }
 
 #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
@@ -204,9 +217,14 @@ use talus_sui_move_call::{CallArg, MoveObject, ReceivingMoveObject};
 use talus_sui_move_ptb::{BuildError, PtbBuilder};
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+struct ID {
+    bytes: Address,
+}
+
 #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
-    id: u64,
+    id: ID,
 }
 
 #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]

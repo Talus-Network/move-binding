@@ -31,8 +31,11 @@ pub use sui_sdk_types::Input as CallArg;
 /// use talus_sui_move_call::MoveObject;
 /// use sui_sdk_types::{Address, Digest, ObjectReference};
 ///
+/// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+/// # struct ID { bytes: Address }
+/// #
 /// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
-/// # struct UID { id: u64 }
+/// # struct UID { id: ID }
 /// #
 /// #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 /// struct Demo {
@@ -85,8 +88,11 @@ impl<T: MoveStruct + HasKey> MoveObject<T> {
 /// use talus_sui_move_call::SharedMoveObject;
 /// use sui_sdk_types::Address;
 ///
+/// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+/// # struct ID { bytes: Address }
+/// #
 /// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
-/// # struct UID { id: u64 }
+/// # struct UID { id: ID }
 /// #
 /// #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 /// struct SharedThing {
@@ -174,8 +180,11 @@ impl<T: MoveStruct + HasKey> SharedMoveObject<T> {
 /// use talus_sui_move_call::ReceivingMoveObject;
 /// use sui_sdk_types::{Address, Digest, ObjectReference};
 ///
+/// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+/// # struct ID { bytes: Address }
+/// #
 /// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
-/// # struct UID { id: u64 }
+/// # struct UID { id: ID }
 /// #
 /// #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 /// struct ReceivingThing {
@@ -427,8 +436,11 @@ impl CallTarget {
 /// use talus_sui_move_call::{CallSpec, MoveObject};
 /// use sui_sdk_types::{Address, Digest, ObjectReference, TypeTag};
 ///
+/// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+/// # struct ID { bytes: Address }
+/// #
 /// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
-/// # struct UID { id: u64 }
+/// # struct UID { id: ID }
 /// #
 /// #[talus_sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
 /// struct Vault {

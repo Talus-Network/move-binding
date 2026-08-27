@@ -2,25 +2,21 @@
 
 Typed building blocks for describing Move calls on Sui.
 
-The crates.io package is `talus-sui-move-call`; Rust code imports it as `talus_sui_move_call`.
-
 This crate builds on top of [`talus-sui-move`](https://docs.rs/talus-sui-move) and solves one problem:
 **describe a Move call in a typed way** (object handles + type arguments + arguments) without
 building or executing transactions.
 
-## Where it fits
+## Relationship to the other crates
 
-`talus-sui-move-call` is the “Call” layer in the repository’s
-[Read → Tx → Commit model](https://github.com/Talus-Network/move-binding/blob/main/MODEL.md):
+`talus-sui-move-call` uses `MoveType` and `MoveStruct` from `talus-sui-move` to build call
+descriptions whose types are checked by Rust:
 
-- **Read** (runtime) fetches objects and classifies ownership from chain state.
-- **Call** (this crate) describes *what* to call and how to encode arguments.
-- **PTB** builds a `ProgrammableTransaction` from a `CallSpec`.
-- **Commit** (runtime) submits and applies effects to advance the cursor.
+- `talus-sui-move-call` describes what to call and how to encode arguments.
+- `talus-sui-move-ptb` can turn a `CallSpec` into a `ProgrammableTransaction`.
+- `talus-sui-move-runtime` can submit that transaction and update typed handles.
 
-This crate sits directly above `talus-sui-move`: it uses `MoveType` and `MoveStruct` to build call
-descriptions (`CallSpec`) whose types are checked by Rust. Transaction building and execution are
-intentionally out of scope.
+This crate can be used independently when an application only needs typed call descriptions.
+Transaction building and execution are intentionally out of scope.
 
 ## Core types
 
@@ -78,9 +74,14 @@ use talus_sui_move::prelude::*;
 use talus_sui_move_call::{CallSpec, MoveObject};
 use sui_sdk_types::{Address, Digest, ObjectReference, TypeTag};
 
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+pub struct ID {
+    pub bytes: Address,
+}
+
 #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 pub struct UID {
-    pub id: u64,
+    pub id: ID,
 }
 
 #[talus_sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
@@ -122,9 +123,14 @@ use std::str::FromStr;
 use talus_sui_move_call::{CallArg, CallSpec, ReceivingMoveObject, SharedMoveObject};
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+struct ID {
+    bytes: Address,
+}
+
 #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
-    id: u64,
+    id: ID,
 }
 
 #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
