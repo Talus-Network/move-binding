@@ -733,7 +733,7 @@ mod tests {
         assert!(!code.contains("pub fn package()"));
         assert!(!code.contains("pub fn with_package<R>"));
         assert!(code.contains("CallTarget::new(call_package(), \"m\", \"mutate\")"));
-        assert!(code.contains("address_fn = \"super::type_package\""));
+        assert!(code.contains("address_fn = \"__type_package_for_Obj\""));
     }
 
     #[test]
@@ -746,7 +746,18 @@ mod tests {
         assert!(code.contains("pub fn type_package() -> sui_move::prelude::Address"));
         assert!(code.contains("pub fn with_packages<R>"));
         assert!(code.contains("CallTarget::new(call_package(), \"m\", \"mutate\")"));
-        assert!(code.contains("address_fn = \"super::type_package\""));
+        assert!(code.contains("address_fn = \"__type_package_for_Obj\""));
+    }
+
+    #[test]
+    fn generated_bindings_resolve_each_datatype_origin() {
+        let code = render_package(&demo_pkg(), &RenderOptions::default());
+
+        assert!(code.contains("pub type TypeOrigins"));
+        assert!(code.contains("pub fn type_package_for("));
+        assert!(code.contains("pub fn with_package_context<R>"));
+        assert!(code.contains("type_package_for(\"m\", \"Obj\")"));
+        assert!(code.contains("type_package_for(\"m\", \"Pair\")"));
     }
 
     #[test]
@@ -973,7 +984,7 @@ mod tests {
 
         let module = parts.modules.get("m").expect("module body");
         assert!(module.contains("pub mod m"));
-        assert!(module.contains("use super::{call_package, type_package};"));
+        assert!(module.contains("use super::{call_package, type_package_for};"));
         assert!(module.contains("pub struct Obj"));
         assert!(module.contains("pub fn mutate"));
     }

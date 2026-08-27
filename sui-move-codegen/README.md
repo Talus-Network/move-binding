@@ -68,7 +68,8 @@ documentation and converts reserved Rust identifiers safely in generated APIs.
 Given a `NormalizedPackage` (either fetched from gRPC or loaded from JSON), this crate can render:
 
 - `CALL_PACKAGE` / `TYPE_PACKAGE` constants for generated calls and type identity
-- `call_package()` / `type_package()` / `with_packages(...)` helpers for scoped package-id overrides
+- `call_package()` / `type_package()` / `with_packages(...)` helpers for scoped package address overrides
+- `type_package_for(...)` / `with_package_context(...)` helpers for exact datatype origins
 - One Rust module per Move module (or a flat layout via `RenderOptions::flatten`)
 - Move datatypes as Rust types (structs use `#[sui_move::move_struct]` via `sui-move`’s `derive`
   feature)
@@ -100,6 +101,94 @@ package that defines the Move types:
 bindings::with_packages(localnet_package, localnet_package, || {
     bindings::m::f(10);
 });
+```
+
+An upgraded package can contain datatypes that originate in different package versions. Calls must
+target the current package, while each type tag must retain the package where that datatype was
+first defined. Generated call builders resolve their target through `call_package()`, and each
+generated datatype resolves its type identity through `type_package_for(module, datatype)`. Use
+`with_package_context` to scope both lookups to one release:
+
+```rust
+# use std::collections::BTreeMap;
+# use sui_sdk_types::Address;
+# mod bindings {
+#     use std::collections::BTreeMap;
+#     use sui_sdk_types::Address;
+#     pub type TypeOrigins = BTreeMap<String, BTreeMap<String, Address>>;
+#     #[derive(Clone)]
+#     struct PackageContext {
+#         call_package: Address,
+#         fallback_type_package: Address,
+#         origins: TypeOrigins,
+#     }
+#     std::thread_local! {
+#         static CONTEXT: std::cell::RefCell<Option<PackageContext>> =
+#             const { std::cell::RefCell::new(None) };
+#     }
+#     pub fn with_package_context<R>(
+#         call_package: Address,
+#         fallback_type_package: Address,
+#         origins: &TypeOrigins,
+#         f: impl FnOnce() -> R,
+#     ) -> R {
+#         struct Reset(Option<PackageContext>);
+#         impl Drop for Reset {
+#             fn drop(&mut self) {
+#                 CONTEXT.with(|slot| {
+#                     slot.replace(self.0.take());
+#                 });
+#             }
+#         }
+#         let previous = CONTEXT.with(|slot| {
+#             slot.replace(Some(PackageContext {
+#                 call_package,
+#                 fallback_type_package,
+#                 origins: origins.clone(),
+#             }))
+#         });
+#         let _reset = Reset(previous);
+#         f()
+#     }
+#     pub fn call_package() -> Address {
+#         CONTEXT.with(|slot| slot.borrow().as_ref().unwrap().call_package)
+#     }
+#     pub fn type_package_for(module: &str, datatype: &str) -> Address {
+#         CONTEXT.with(|slot| {
+#             let context = slot.borrow();
+#             let context = context.as_ref().unwrap();
+#             context
+#                 .origins
+#                 .get(module)
+#                 .and_then(|datatypes| datatypes.get(datatype))
+#                 .copied()
+#                 .unwrap_or(context.fallback_type_package)
+#         })
+#     }
+# }
+let initial_package = Address::from_static("0xa1");
+let upgraded_package = Address::from_static("0xa2");
+let current_package = Address::from_static("0xa3");
+let origins = BTreeMap::from([(
+    "agent".to_owned(),
+    BTreeMap::from([
+        ("Agent".to_owned(), initial_package),
+        ("AgentStateV2".to_owned(), upgraded_package),
+    ]),
+)]);
+
+let (call_package, agent_type_package, state_v2_type_package) =
+    bindings::with_package_context(current_package, initial_package, &origins, || {
+        (
+            bindings::call_package(),
+            bindings::type_package_for("agent", "Agent"),
+            bindings::type_package_for("agent", "AgentStateV2"),
+        )
+    });
+
+assert_eq!(call_package, current_package);
+assert_eq!(agent_type_package, initial_package);
+assert_eq!(state_v2_type_package, upgraded_package);
 ```
 
 ## Example: render from an in-memory IR
