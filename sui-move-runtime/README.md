@@ -1,28 +1,32 @@
-# sui-move-runtime
+# talus-sui-move-runtime
 
 Runtime layer for typed Move interactions on Sui.
 
+The crates.io package is `talus-sui-move-runtime`; Rust code imports it as `talus_sui_move_runtime`.
+
 This crate sits at the top of this stack:
 
-- [`sui-move`](../sui-move/README.md): Move-shaped types (`MoveType`, `MoveStruct`, abilities)
-- [`sui-move-call`](../sui-move-call/README.md): typed call descriptions (`CallSpec`) and `ToCallArg`
-- [`sui-move-ptb`](../sui-move-ptb/README.md): build a `ProgrammableTransaction` (PTB) from `CallSpec`
-- `sui-move-runtime` (this crate): submit/simulate/inspect PTBs + keep runtime-owned handles up to date
+- [`talus-sui-move`](https://docs.rs/talus-sui-move): Rust representations of Move types
+  (`MoveType`, `MoveStruct`, abilities)
+- [`talus-sui-move-call`](https://docs.rs/talus-sui-move-call): typed call descriptions (`CallSpec`) and `ToCallArg`
+- [`talus-sui-move-ptb`](https://docs.rs/talus-sui-move-ptb): build a `ProgrammableTransaction` (PTB) from `CallSpec`
+- `talus-sui-move-runtime` (this crate): submit, simulate, or inspect PTBs and keep handles up to date
 
 This crate solves one problem:
 **provide an ergonomic Read → Tx → Commit boundary for typed Sui interactions** while staying
-truthful to Sui’s “versioned objects + effects” model (`MODEL.md`):
+truthful to Sui’s
+[versioned objects + effects model](https://github.com/Talus-Network/move-binding/blob/main/MODEL.md):
 
 - In **Read** you fetch objects and prepare call specs.
-- In **Tx** you build a PTB and can simulate / dev-inspect / commit it.
+- In **Tx** you build a PTB and can simulate, inspect, or commit it.
 - On **commit**, you always get a `Receipt` (digest + effects/status when available + finality
-  info), and the runtime advances its local cursor by applying an effects-derived patch whenever
-  effects are present.
+  info), and the runtime advances its local cursor by applying a patch derived from any available
+  effects.
 
-## Quickstart (end-to-end)
+## Quickstart (complete)
 
 ```rust,no_run
-use sui_move_runtime::prelude::*;
+use talus_sui_move_runtime::prelude::*;
 use sui_sdk_types::{Address, PersonalMessage, Transaction, UserSignature};
 
 # #[derive(Clone)]
@@ -36,10 +40,10 @@ use sui_sdk_types::{Address, PersonalMessage, Transaction, UserSignature};
 #     }
 # }
 #
-# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+# #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 # struct UID { id: u64 }
 #
-# #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+# #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 # struct Demo {
 #     id: UID,
 # }
@@ -60,16 +64,16 @@ async fn demo() -> Result<(), Error> {
 
     let mut rt = Runtime::new(client, signer);
 
-    // Read: fetch a typed runtime-owned handle.
+    // Read: fetch a typed handle owned by the runtime.
     let object: Object<Demo> = rt.read().object::<Demo>(object_id).await?;
 
-    // Tx: one-shot build + commit with the `tx!` macro.
-    let receipt = sui_move_runtime::tx!(&mut rt, sender => {
+    // Tx: build and commit once with the `tx!` macro.
+    let receipt = talus_sui_move_runtime::tx!(&mut rt, sender => {
         touch_object(&object, 10);
     })
     .await?;
 
-    // On-chain execution failures are recorded in the receipt (they are not transport errors).
+    // Execution failures are recorded in the receipt (they are not transport errors).
     receipt.ensure_success()?;
 
     // Back in Read: `object`'s `ObjectReference` has been updated internally.
@@ -88,7 +92,7 @@ async fn demo() -> Result<(), Error> {
 - Ergonomic helper:
   - `tx!`: macro that builds a `Tx`, runs an action, and returns a future (`.await`)
 - Handles (all implement `ToCallArg`):
-  - `Object<T>`: runtime-owned object handle; picks the correct input mode on conversion (shared defaults to immutable)
+  - `Object<T>`: object handle owned by the runtime; picks the correct input mode on conversion (shared defaults to immutable)
   - `SharedObject<T>`: explicit shared input (`Input::Shared`)
   - `ReceivingObject<T>`: explicit receiving input (`Input::Receiving`)
 - Transaction actions:
@@ -98,25 +102,25 @@ async fn demo() -> Result<(), Error> {
 
 ## Preflight and debugging (simulate / inspect)
 
-If you want a one-shot action, use the `tx!` macro variants:
+If you want a single action, use the `tx!` macro variants:
 
 ```rust,no_run
-use sui_move_runtime::prelude::*;
+use talus_sui_move_runtime::prelude::*;
 use sui_sdk_types::Address;
 
-# #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+# #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 # struct UID { id: u64 }
 #
-# #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+# #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 # struct Demo { id: UID }
 #
 # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: Address, object: Object<Demo>) -> Result<(), Error> {
-let _sim = sui_move_runtime::tx!(simulate, &mut rt, sender => {
+let _sim = talus_sui_move_runtime::tx!(simulate, &mut rt, sender => {
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 })
 .await?;
 
-let _dbg = sui_move_runtime::tx!(inspect, &mut rt, sender => {
+let _dbg = talus_sui_move_runtime::tx!(inspect, &mut rt, sender => {
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 })
 .await?;
@@ -128,7 +132,7 @@ let _dbg = sui_move_runtime::tx!(inspect, &mut rt, sender => {
 If you need to simulate/inspect the **exact same PTB** before committing it, build a `Tx` once:
 
 ```rust,no_run
-use sui_move_runtime::prelude::*;
+use talus_sui_move_runtime::prelude::*;
 
 # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
 let mut tx = rt.tx(sender);
@@ -146,11 +150,11 @@ receipt.ensure_success()?;
 
 Sui has two related but distinct concepts:
 
-- **On-chain owner kinds** (`sui_sdk_types::Owner`): what an object *is* right now.
+- **Owner kinds from chain state** (`sui_sdk_types::Owner`): what an object *is* right now.
 - **Transaction input modes** (`sui_sdk_types::Input`): how you pass an object *this time*.
 
-This crate uses on-chain ownership (from `Owner`) to choose a safe default transaction input mode
-when converting an [`Object<T>`] into an argument.
+This crate uses ownership from chain state (from `Owner`) to choose a safe default transaction
+input mode when converting an [`Object<T>`] into an argument.
 
 Transaction input modes for objects have different wire shapes and are intentionally represented as
 distinct types:
@@ -159,42 +163,42 @@ distinct types:
 - Shared: `Input::Shared(SharedInput)` (uses `initial_shared_version` + mutability)
 - Receiving: `Input::Receiving(ObjectReference)` (transaction input mode for `sui::transfer::Receiving<T>`)
 
-Note: receiving is not an on-chain owner kind. It is an ephemeral per-transaction “receiving
-ticket” consumed by `sui::transfer::receive`/`public_receive`.
+Note: receiving is not an owner kind recorded on chain. It is a temporary “receiving ticket”
+consumed by `sui::transfer::receive`/`public_receive`.
 
 Note: Sui also has `Owner::ConsensusAddress { start_version, owner }` objects. They use the
-shared-like input shape (`start_version` plays the same role as `initial_shared_version`).
+shared input shape (`start_version` plays the same role as `initial_shared_version`).
 
 Note: child objects (`Owner::Object(_)`) cannot be used as direct transaction inputs. This crate
 rejects them early when you try to construct handles that would later become invalid inputs.
 
 This crate mirrors those shapes:
 
-- Use `Read::object::<T>(id)` to get an `Object<T>` for owned/immutable and shared-like objects.
-  - Shared-like objects default to immutable shared when used as an argument.
+- Use `Read::object::<T>(id)` to get an `Object<T>` for owned, immutable, and shared input shapes.
+  - Objects with a shared input shape default to immutable shared when used as an argument.
   - Derive explicit views when needed: `obj.shared_immutable()?`, `obj.shared_mutable()?`, `obj.receiving()?`.
 
 ### Explicit views from `Object<T>`
 
 `Object<T>` chooses `Input::ImmutableOrOwned` vs `Input::Shared` based on the runtime’s latest
-known owner kind. When an object is shared-like, it defaults to **immutable shared**.
+known owner kind. When an object has a shared input shape, it defaults to **immutable shared**.
 
 If you need a specific input mode, derive an explicit view at the moment it matters:
 
 ```rust,no_run
-use sui_move_runtime::prelude::*;
+use talus_sui_move_runtime::prelude::*;
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
     id: u64,
 }
 
-#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+#[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Demo {
     id: UID,
 }
 
-fn views(obj: Object<Demo>) -> Result<(), sui_move_call::CallArgError> {
+fn views(obj: Object<Demo>) -> Result<(), talus_sui_move_call::CallArgError> {
     let _shared_mut: SharedObject<Demo> = obj.shared_mutable()?;
     let _receiving: ReceivingObject<Demo> = obj.receiving()?;
     Ok(())
@@ -205,15 +209,15 @@ fn views(obj: Object<Demo>) -> Result<(), sui_move_call::CallArgError> {
 
 All transaction actions take a sender address and are methods on a transaction builder (`Tx`):
 
-- `call` / `arg` / `input`: build the PTB in-place.
+- `call` / `arg` / `input`: build the PTB in place.
 - `simulate`: calls `simulate_transaction` with checks enabled. No signature is required and the
   chain is not mutated. Handles are not updated.
 - `inspect`: calls `simulate_transaction` with checks disabled and asks gRPC for
   `command_outputs`. This is meant for debugging and observability, not for guaranteeing that a
-  real on-chain commit will succeed.
+  real commit on chain will succeed.
 - `commit`: builds a full `Transaction`, signs it, and submits it.
   - By default it also waits for checkpoint inclusion (`TxOptions::finality = Checkpointed`).
-  - When execution-only finality is requested (`TxOptions::finality = Executed`), the runtime
+  - When the caller requests execution finality (`TxOptions::finality = Executed`), the runtime
     returns as soon as the transaction is executed (effects produced).
   - In both cases it requests `effects.bcs` so the runtime can decode `TransactionEffects` and
     refresh handles.
@@ -236,7 +240,7 @@ If a receipt does not contain effects (for example, because it was persisted wit
 can recover by digest and advance the cursor explicitly:
 
 ```rust,no_run
-use sui_move_runtime::prelude::*;
+use talus_sui_move_runtime::prelude::*;
 
 # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, receipt: Receipt) -> Result<(), Error> {
 if receipt.effects.is_none() {
@@ -247,7 +251,7 @@ Ok(())
 ```
 
 ```rust,no_run
-use sui_move_runtime::prelude::*;
+use talus_sui_move_runtime::prelude::*;
 use std::time::Duration;
 use sui_sdk_types::Address;
 
@@ -296,10 +300,10 @@ receipt.ensure_success()?;
 ## Building PTBs directly (more complex flows)
 
 If you need native PTB commands (coin ops, transfers, result wiring, etc), build the PTB explicitly
-using `sui-move-ptb` and pass it to `commit_ptb` / `simulate_ptb` / `inspect_ptb`.
+using `talus-sui-move-ptb` and pass it to `commit_ptb` / `simulate_ptb` / `inspect_ptb`.
 
 ```rust
-use sui_move_runtime::prelude::*;
+use talus_sui_move_runtime::prelude::*;
 use sui_sdk_types::Address;
 
 let package: Address = "0x1".parse().unwrap();
@@ -328,27 +332,27 @@ assert_eq!(ptb.commands.len(), 1);
 `simulate`/`inspect` do not sign or submit, and do not currently model explicit gas payment
 configuration (they rely on the simulation gRPC).
 
-## Typed reads (tag-checked decoding)
+## Typed reads with tag verification
 
 In addition to constructing handles, `Read` can fetch and decode Move object contents:
 
-- `Read::get::<T>(id) -> (Object<T>, T)`: tag-check + decode and return both a handle and value.
+- `Read::get::<T>(id) -> (Object<T>, T)`: tag check + decode and return both a handle and value.
 - `Read::decode(&Object<T>) -> T`: refresh the handle and decode the latest contents.
-- `*_unchecked` variants skip type-tag verification (explicit escape hatch).
+- `*_unchecked` variants skip type tag verification (explicit escape hatch).
 
-These helpers use `sui-move`’s tag-checked decoding (`MoveInstance<T>`), so “type tag says X but
-BCS layout expects Y” becomes an explicit error instead of a silent footgun.
+These helpers use `talus-sui-move` decoding with tag verification (`MoveInstance<T>`), so “type tag
+says X but BCS layout expects Y” becomes an explicit error instead of a silent footgun.
 
 ```rust,no_run
-use sui_move_runtime::prelude::*;
+use talus_sui_move_runtime::prelude::*;
 use sui_sdk_types::Address;
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
     id: u64,
 }
 
-#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+#[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Demo {
     id: UID,
     value: u64,
@@ -371,7 +375,7 @@ To keep your Move interface layer usable in every context (unit tests, pure PTB 
 write interface functions against `ToCallArg` instead of concrete handle types:
 
 ```rust
-use sui_move_runtime::prelude::*;
+use talus_sui_move_runtime::prelude::*;
 use sui_sdk_types::Address;
 
 fn transfer_any_object(obj: &impl ToCallArg, recipient: Address) -> CallSpec {
@@ -385,21 +389,21 @@ fn transfer_any_object(obj: &impl ToCallArg, recipient: Address) -> CallSpec {
 
 This works with:
 
-- `sui_move_call::MoveObject<T>` (a plain wrapper around `ObjectReference`), and
-- `sui_move_runtime::Object<T>` (a runtime-owned handle that auto-updates on commit).
+- `talus_sui_move_call::MoveObject<T>` (a plain wrapper around `ObjectReference`), and
+- `talus_sui_move_runtime::Object<T>` (a handle owned by the runtime that updates on commit).
 
-## How runtime-owned handles work
+## How runtime handles work
 
 On Sui, mutating an object changes its `ObjectReference` (version/digest). Updating these refs
 manually is annoying and tends to leak plumbing into user code.
 
-This crate makes handles *runtime-owned*:
+This crate lets the runtime own handles:
 
 - `Read::object`/`Read::receiving_object` fetch the current `ObjectReference` and **intern** it in
   a cursor (your local frontier) keyed by `object_id`.
 - The returned `Object<T>` / `ReceivingObject<T>` is a small `Clone` handle backed by `Arc<RwLock<...>>`.
 - `Tx::commit` requests `effects.bcs` from gRPC, decodes `TransactionEffects`, extracts updated
-  object information, derives an effects-based patch, and applies it to the cursor, updating any
+  object information, derives a patch from those effects, and applies it to the cursor, updating any
   live handle cells that match those object ids.
 
 Consequences:
@@ -413,18 +417,18 @@ Consequences:
 
 ### Storing handles in Rust structs
 
-The point of runtime-owned handles is that you can store them in normal Rust state without
+The point of handles owned by the runtime is that you can store them in normal Rust state without
 threading `&mut ObjectReference` everywhere.
 
 ```rust,no_run
-use sui_move_runtime::prelude::*;
+use talus_sui_move_runtime::prelude::*;
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
     id: u64,
 }
 
-#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+#[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Demo {
     id: UID,
 }
@@ -439,10 +443,10 @@ let wallet = Wallet {
     object: rt.read().object("0x2".parse().unwrap()).await?,
 };
 
-let ptb = sui_move_ptb::ptb! {
-    // any call that mutates `wallet.object` on-chain
+let ptb = talus_sui_move_ptb::ptb! {
+    // any call that mutates `wallet.object` in chain state
     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
-}?; 
+}?;
 rt.tx(sender).commit_ptb(ptb).await?;
 
 // The `ObjectReference` is refreshed internally after commit.
@@ -453,11 +457,12 @@ let _latest = wallet.object.reference();
 
 ## Outputs from `inspect` / decoding BCS
 
-Dev-inspect returns per-command outputs as raw BCS blobs (`BcsValue`). This crate does not impose a
-new typing layer on top of those blobs, but you can decode them using `sui_sdk_types::bcs`:
+Inspection returns outputs for each command as raw BCS blobs (`BcsValue`). This crate does not
+impose a new typing layer on top of those blobs, but you can decode them using
+`sui_sdk_types::bcs`:
 
 ```rust
-use sui_move_runtime::BcsValue;
+use talus_sui_move_runtime::BcsValue;
 use sui_sdk_types::bcs::{FromBcs, ToBcs};
 
 let bytes = 10u64.to_bcs().unwrap();
@@ -482,7 +487,7 @@ assert_eq!(decoded, 10);
 - `Read::refresh_id` / `Read::refresh_ids` refresh cursor state explicitly (external drift escape hatch).
 - `Read::grpc_client_mut` gives direct access to the underlying `GrpcClient` when needed.
 
-## Non-goals
+## Out of scope
 
 - No code generation: interface functions are still handwritten or derived elsewhere.
-- No “live ORM”: decoding is explicit snapshot reads (`Read::get` / `Read::decode`), not a background-syncing cache.
+- No “live ORM”: decoding is explicit snapshot reads (`Read::get` / `Read::decode`), not a background synchronization cache.

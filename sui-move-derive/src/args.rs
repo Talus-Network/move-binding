@@ -1,9 +1,8 @@
 //! Parsing for the `#[move_struct(...)]` attribute arguments.
 //!
-//! The proc-macro surface accepts a compact string-based syntax (e.g.
-//! `abilities = "key, store"`, `type_abilities = "T: store, copy; U: drop"`). This module turns
-//! those tokens into a structured representation and produces user-facing errors for malformed
-//! input.
+//! The procedural macro surface accepts compact string arguments, such as
+//! `abilities = "key, store"` and `type_abilities = "T: store, copy; U: drop"`. This module turns
+//! those tokens into a structured representation and reports clear errors for malformed input.
 
 use std::collections::BTreeMap;
 

@@ -1,23 +1,28 @@
 [package]
-name = "sui-move-runtime"
-version = "0.1.0"
-edition = "2021"
-description = "Runtime layer for typed Move interactions on Sui (submit, wait, auto-update handles)."
+name = "talus-sui-move-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Runtime layer for typed Move interactions on Sui with automatic handle updates."
 readme = "README.md"
+publish = ["crates-io"]
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/talus-sui-move-runtime"
+keywords = ["sui", "move", "blockchain", "transactions"]
+categories = ["api-bindings", "development-tools"]
 
 [dependencies]
 thiserror = { workspace = true }
 sui-sdk-types = { workspace = true }
 serde = { workspace = true }
-sui-move = { version = "0.1.0", path = "../sui-move" }
-sui-move-call = { version = "0.1.0", path = "../sui-move-call" }
-sui-move-ptb = { version = "0.1.0", path = "../sui-move-ptb" }
+talus-sui-move = { workspace = true }
+talus-sui-move-call = { workspace = true }
+talus-sui-move-ptb = { workspace = true }
 sui-rpc = { workspace = true }
 sui-crypto = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
-sui-move = { path = "../sui-move", features = ["derive"] }
+talus-sui-move = { workspace = true, features = ["derive"] }

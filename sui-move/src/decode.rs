@@ -1,4 +1,4 @@
-//! Ability-aware decoding helpers.
+//! Decoding helpers constrained by Move abilities.
 //!
 //! These helpers mirror the conceptual “this value is storable/copyable/keyed” boundaries that
 //! exist in Move, while keeping the runtime behavior small and explicit.
@@ -22,7 +22,7 @@ pub fn decode_copyable<T: Copyable + DeserializeOwned>(bytes: &[u8]) -> Result<T
 /// # Example
 /// ```
 /// use serde::{Deserialize, Serialize};
-/// use sui_move::{decode_keyed, parse_address, parse_identifier, HasKey, HasStore, MoveStruct, MoveType};
+/// use talus_sui_move::{decode_keyed, parse_address, parse_identifier, HasKey, HasStore, MoveStruct, MoveType};
 /// use sui_sdk_types::{StructTag, TypeTag};
 ///
 /// #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,12 +1,17 @@
 [package]
-name = "sui-move-codegen"
-version = "0.1.0"
-edition = "2021"
+name = "talus-sui-move-codegen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Generate typed Rust bindings (types + CallSpec builders) from Sui Move package metadata."
 readme = "README.md"
+publish = ["crates-io"]
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/talus-sui-move-codegen"
+keywords = ["sui", "move", "blockchain", "codegen"]
+categories = ["api-bindings", "development-tools"]
 
 [dependencies]
 thiserror = { workspace = true }

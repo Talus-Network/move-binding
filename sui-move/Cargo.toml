@@ -1,24 +1,32 @@
 [package]
-name = "sui-move"
-version = "0.1.0"
-edition = "2021"
-description = "Move-shaped typed layer for Rust, built on top of sui-sdk-types."
+name = "talus-sui-move"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Rust type representations for Move, built on top of sui-sdk-types."
 readme = "README.md"
+publish = ["crates-io"]
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/talus-sui-move"
+keywords = ["sui", "move", "blockchain", "bindings"]
+categories = ["api-bindings", "development-tools"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true }
 bcs = { workspace = true }
 ethnum = { workspace = true }
 sui-sdk-types = { workspace = true }
 thiserror = { workspace = true }
-sui-move-derive = { path = "../sui-move-derive", optional = true }
+talus-sui-move-derive = { workspace = true, optional = true }
 
 [features]
 default = []
-derive = ["dep:sui-move-derive"]
+derive = ["dep:talus-sui-move-derive"]
 
 [[example]]
 name = "derive_struct"

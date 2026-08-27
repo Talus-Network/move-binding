@@ -20,7 +20,7 @@ use crate::{Error, GrpcClient};
 ///
 /// # Example
 /// ```rust,no_run
-/// use sui_move_codegen::{fetch_package, GrpcClient};
+/// use talus_sui_move_codegen::{fetch_package, GrpcClient};
 /// use sui_sdk_types::Address;
 ///
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {

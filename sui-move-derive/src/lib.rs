@@ -9,16 +9,16 @@ mod util;
 
 /// Marker attribute for Move module namespaces.
 ///
-/// Today this is a no-op and exists mainly to make code more readable and leave room for future
-/// tooling.
+/// This attribute currently leaves the module unchanged. It makes declarations easier to read and
+/// leaves room for future tooling.
 ///
 /// # Example
 /// ```rust,no_run
-/// use sui_move_derive::{move_module, move_struct};
+/// use talus_sui_move_derive::{move_module, move_struct};
 ///
 /// #[move_module(address = "0x1", name = "vault")]
 /// mod vault {
-///     #[sui_move_derive::move_struct(address = "0x1", module = "vault", abilities = "copy, store")]
+///     #[talus_sui_move_derive::move_struct(address = "0x1", module = "vault", abilities = "copy, store")]
 ///     pub struct Counter {
 ///         pub value: u64,
 ///     }
@@ -31,19 +31,19 @@ pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
     input
 }
 
-/// Define a Move-shaped struct and derive `sui-move` trait implementations.
+/// Define a Rust struct that represents a Move struct and derive `talus-sui-move` traits.
 ///
 /// The attribute arguments define the Move address/module/name plus ability surface, and allow
 /// marking type parameters as phantom.
 ///
 /// The macro generates:
-/// - `impl sui_move::MoveType` and `impl sui_move::MoveStruct`
+/// - `impl talus_sui_move::MoveType` and `impl talus_sui_move::MoveStruct`
 /// - Ability marker impls (`HasKey`, `HasStore`, `HasCopy`, `HasDrop`)
-/// - `serde` derives (via `sui_move::__private`, so downstream crates don't need direct `serde`)
+/// - `serde` derives (via `talus_sui_move::__private`, so downstream crates don't need direct `serde`)
 /// - Optional injected `PhantomData` fields (see `phantoms = "..."`)
 ///
 /// # Supported input
-/// - Named-field structs only (`struct X { ... }`)
+/// - Structs with named fields only (`struct X { ... }`)
 ///
 /// # Arguments
 /// - `address = "0x..."` (required): Move address
@@ -51,23 +51,23 @@ pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
 ///   when building `StructTag`s; `address` remains the default/documented address
 /// - `module = "..."` (required): Move module name
 /// - `name = "..."` (optional): override Move struct name (defaults to Rust name)
-/// - `abilities = "key, store, copy, drop"` (optional): comma-separated Move abilities
-/// - `phantoms = "T, U"` (optional): comma-separated phantom type params
+/// - `abilities = "key, store, copy, drop"` (optional): Move abilities separated by commas
+/// - `phantoms = "T, U"` (optional): phantom type parameters separated by commas
 /// - `type_abilities = "T: store, copy; U: drop"` (optional): ability expectations for type params
-/// - `uid_type = "path::to::UID"` (optional): override what package-defined type counts as `UID`
+/// - `uid_type = "path::to::UID"` (optional): override which package type counts as `UID`
 ///   for `key` enforcement
 ///
 /// # Example
 /// ```rust,no_run
 /// use std::marker::PhantomData;
-/// use sui_move::prelude::Address;
-/// use sui_move_derive::move_struct;
+/// use talus_sui_move::prelude::Address;
+/// use talus_sui_move_derive::move_struct;
 ///
 /// /// Local package declaration for `0x2::object::ID`.
 /// ///
-/// /// Framework types are ordinary Move declarations from the type-kernel perspective. In
+/// /// Framework types are ordinary Move declarations from the type kernel perspective. In
 /// /// production this shape should come from generated package bindings rather than from
-/// /// `sui-move` itself.
+/// /// `talus-sui-move` itself.
 /// #[move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
 /// pub struct ID {
 ///     pub bytes: Address,
@@ -75,7 +75,7 @@ pub fn move_module(_args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// /// Local package declaration for `0x2::object::UID`.
 /// ///
-/// /// A `key` object is recognized by an `id` field whose type is a package-defined `UID` shape.
+/// /// A `key` object is recognized by an `id` field whose type is a `UID` shape defined by a package.
 /// #[move_struct(address = "0x2", module = "object", abilities = "store")]
 /// pub struct UID {
 ///     pub id: ID,

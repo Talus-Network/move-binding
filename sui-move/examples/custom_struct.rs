@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sui_move::{parse_address, parse_identifier, HasStore, MoveStruct, MoveType};
+use talus_sui_move::{parse_address, parse_identifier, HasStore, MoveStruct, MoveType};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct MyCounter {

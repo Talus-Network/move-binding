@@ -14,29 +14,29 @@ pub use crate::tx::{
 
 use std::time::Duration;
 
-/// Re-export of `sui_crypto::SuiSigner` used by [`Runtime`] and [`Tx`].
+/// Public alias for `sui_crypto::SuiSigner` used by [`Runtime`] and [`Tx`].
 ///
-/// This lets generated bindings name the signer bound as `sui_move_runtime::SuiSigner` without
+/// This lets generated bindings name the signer bound as `talus_sui_move_runtime::SuiSigner` without
 /// requiring consumers to depend on `sui-crypto` directly.
 pub use sui_crypto::SuiSigner;
 use sui_sdk_types::{Address, Mutability, ProgrammableTransaction, TransactionEffects, TypeTag};
 
-/// Errors produced by `sui-move-runtime`.
+/// Errors produced by `talus-sui-move-runtime`.
 ///
 /// This is a small umbrella enum that preserves the main failure boundary:
 /// - building a PTB (`Build`)
 /// - submitting/waiting (`Tx`)
 /// - fetching objects for handles over Sui gRPC (`Grpc`)
-/// - simulation/dev-inspection (`Simulate`)
+/// - simulation/inspection (`Simulate`)
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// Building a PTB failed.
     #[error(transparent)]
-    Build(#[from] sui_move_ptb::BuildError),
+    Build(#[from] talus_sui_move_ptb::BuildError),
 
     /// Constructing a generated Move call failed.
     #[error(transparent)]
-    CallSpec(#[from] sui_move_call::CallSpecError),
+    CallSpec(#[from] talus_sui_move_call::CallSpecError),
 
     /// Signing or submitting failed.
     #[error(transparent)]
@@ -46,7 +46,7 @@ pub enum Error {
     #[error(transparent)]
     Grpc(#[from] tx::GrpcError),
 
-    /// Simulating or dev-inspecting failed.
+    /// Simulating or inspecting failed.
     #[error(transparent)]
     Simulate(#[from] tx::SimulateError),
 
@@ -61,10 +61,10 @@ pub enum Error {
         object_id: Address,
         /// Underlying verification/BCS error.
         #[source]
-        source: sui_move::DecodeError,
+        source: talus_sui_move::DecodeError,
     },
 
-    /// The requested object kind does not match on-chain ownership.
+    /// The requested object kind does not match on chain ownership.
     #[error("object {object_id} is {actual}, expected {expected}")]
     ObjectKind {
         /// Object id that was fetched.
@@ -79,28 +79,28 @@ pub enum Error {
 /// Sui gRPC client used by the runtime.
 pub type GrpcClient = sui_rpc::Client;
 
-/// Long-lived runtime owning a Sui gRPC client + signer + handle cursor.
+/// Runtime that owns a Sui gRPC client, signer, and handle cursor.
 ///
 /// This is the entry point for the Read → Tx → Commit mental model:
 /// - [`Runtime::read`] for fetching/constructing typed handles
 /// - [`Runtime::tx`] for simulating/inspecting/committing PTBs
 ///
-/// # Runtime-owned handles
+/// # Runtime handles
 ///
 /// Handles returned by [`Read::object`] and [`Read::receiving_object`] are **interned** in the
 /// runtime’s cursor (your local frontier) by `object_id`. Clones of the same handle share the same
 /// internal cell, so they all see updates.
 ///
-/// After [`Tx::commit`], the runtime decodes `TransactionEffects` from gRPC, derives an
-/// effects-based patch, and applies it to the cursor, updating any live handle cells whose object
-/// id appears in the effects.
+/// After [`Tx::commit`], the runtime decodes `TransactionEffects` from gRPC, derives a patch from
+/// those effects, and applies it to the cursor. This updates any live handle cells whose object id
+/// appears in the effects.
 ///
 /// This is the core ergonomic win: you can store typed handles in normal Rust structs without
 /// threading `&mut` everywhere just to keep `ObjectReference`s current.
 ///
 /// # Example
 /// ```rust,no_run
-/// use sui_move_runtime::prelude::*;
+/// use talus_sui_move_runtime::prelude::*;
 /// use sui_sdk_types::{PersonalMessage, Transaction, UserSignature};
 ///
 /// # #[derive(Clone)]
@@ -141,8 +141,8 @@ impl<S: SuiSigner> Runtime<S> {
 
     /// Replace the runtime cursor with a previously captured snapshot.
     ///
-    /// Prefer calling this immediately after [`Runtime::new`] and before creating any runtime-owned
-    /// handles.
+    /// Prefer calling this immediately after [`Runtime::new`] and before creating any handles owned
+    /// by the runtime.
     pub fn with_cursor_snapshot(mut self, snapshot: CursorSnapshot) -> Self {
         self.cursor = handles::Cursor::from_snapshot(snapshot);
         self
@@ -160,7 +160,7 @@ impl<S: SuiSigner> Runtime<S> {
     /// a receipt returned by a gRPC node that did not include `effects.bcs`).
     ///
     /// If the transaction effects are returned by gRPC, the runtime derives an effects patch and
-    /// applies it to its cursor, updating any matching runtime-owned handles.
+    /// applies it to its cursor, updating any matching handles owned by the runtime.
     pub async fn sync_transaction(
         &mut self,
         digest: sui_sdk_types::Digest,
@@ -199,7 +199,7 @@ impl<S: SuiSigner> Runtime<S> {
         Tx {
             rt: self,
             sender,
-            ptb: sui_move_ptb::PtbBuilder::new(),
+            ptb: talus_sui_move_ptb::PtbBuilder::new(),
         }
     }
 
@@ -210,7 +210,7 @@ impl<S: SuiSigner> Runtime<S> {
 
 /// Read view: read/fetch helpers and handle construction.
 ///
-/// This view is intentionally read-only with respect to the chain: it fetches data from gRPC and
+/// This view is intentionally read only with respect to the chain: it fetches data from gRPC and
 /// constructs typed handles, but it does not submit transactions.
 pub struct Read<'a, S> {
     rt: &'a mut Runtime<S>,
@@ -260,28 +260,29 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         Ok(())
     }
 
-    /// Refresh the reference and owner information for a runtime-owned handle.
+    /// Refresh the reference and owner information for a handle owned by the runtime.
     ///
     /// This is the explicit escape hatch for external drift: if another transaction changes an
     /// owned object (or rotates its `ObjectReference`), your local cursor does not update until you
     /// either commit through this runtime or refresh explicitly.
-    pub async fn refresh<T: sui_move::MoveStruct + sui_move::HasKey>(
+    pub async fn refresh<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey>(
         &mut self,
         obj: &Object<T>,
     ) -> Result<(), Error> {
         self.refresh_id(obj.object_id()).await
     }
 
-    /// Construct a runtime-owned object handle by fetching its latest `ObjectReference` and owner kind.
+    /// Construct an object handle owned by the runtime by fetching its latest `ObjectReference` and
+    /// owner kind.
     ///
     /// The returned [`Object<T>`] is the default handle type used throughout this crate:
     /// - owned/immutable objects convert to `Input::ImmutableOrOwned(ObjectReference)`
-    /// - shared-like objects convert to `Input::Shared(SharedInput)` (immutable by default)
+    /// - objects with a shared input shape convert to `Input::Shared(SharedInput)` (immutable by default)
     ///
     /// If you need an explicit input mode, derive a view from the handle at the moment it matters:
     /// - `obj.shared_immutable()?` / `obj.shared_mutable()?`
     /// - `obj.receiving()?`
-    pub async fn object<T: sui_move::MoveStruct + sui_move::HasKey>(
+    pub async fn object<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey>(
         &mut self,
         object_id: Address,
     ) -> Result<Object<T>, Error> {
@@ -318,11 +319,11 @@ impl<'a, S: SuiSigner> Read<'a, S> {
 
     /// Fetch an object and decode its Move contents into `T`.
     ///
-    /// This performs a tag check (`T::type_tag_static()` must match the on-chain `TypeTag`) and
+    /// This performs a tag check (`T::type_tag_static()` must match the on chain `TypeTag`) and
     /// returns both:
-    /// - a runtime-owned handle (`Object<T>`) and
+    /// - a handle owned by the runtime (`Object<T>`) and
     /// - the decoded value (`T`).
-    pub async fn get<T: sui_move::MoveStruct + sui_move::HasKey>(
+    pub async fn get<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey>(
         &mut self,
         object_id: Address,
     ) -> Result<(Object<T>, T), Error> {
@@ -344,15 +345,15 @@ impl<'a, S: SuiSigner> Read<'a, S> {
             .intern_object::<T>(fetched.reference, fetched.owner);
 
         let got = TypeTag::Struct(Box::new(fetched.struct_tag));
-        let decoded = sui_move::MoveInstance::<T>::from_raw_type(got, &fetched.contents)
+        let decoded = talus_sui_move::MoveInstance::<T>::from_raw_type(got, &fetched.contents)
             .map_err(|source| Error::Decode { object_id, source })?
             .value;
 
         Ok((obj, decoded))
     }
 
-    /// Fetch an object and decode its contents as `T` without verifying the on-chain type tag.
-    pub async fn get_unchecked<T: sui_move::MoveStruct + sui_move::HasKey>(
+    /// Fetch an object and decode its contents as `T` without verifying the on chain type tag.
+    pub async fn get_unchecked<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey>(
         &mut self,
         object_id: Address,
     ) -> Result<(Object<T>, T), Error> {
@@ -380,11 +381,11 @@ impl<'a, S: SuiSigner> Read<'a, S> {
         Ok((obj, decoded))
     }
 
-    /// Fetch and decode the latest on-chain contents for a runtime-owned object handle.
+    /// Fetch and decode the latest on chain contents for an object handle owned by the runtime.
     ///
-    /// This performs a tag check and refreshes the runtime-owned handle's reference/owner
-    /// information in the cursor.
-    pub async fn decode<T: sui_move::MoveStruct + sui_move::HasKey>(
+    /// This performs a tag check and refreshes the handle reference and owner information in the
+    /// cursor.
+    pub async fn decode<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey>(
         &mut self,
         obj: &Object<T>,
     ) -> Result<T, Error> {
@@ -406,18 +407,18 @@ impl<'a, S: SuiSigner> Read<'a, S> {
             .intern_object::<T>(fetched.reference, fetched.owner);
 
         let got = TypeTag::Struct(Box::new(fetched.struct_tag));
-        let decoded = sui_move::MoveInstance::<T>::from_raw_type(got, &fetched.contents)
+        let decoded = talus_sui_move::MoveInstance::<T>::from_raw_type(got, &fetched.contents)
             .map_err(|source| Error::Decode { object_id, source })?
             .value;
 
         Ok(decoded)
     }
 
-    /// Fetch and decode the latest on-chain contents for a runtime-owned object handle without tag
-    /// verification.
+    /// Fetch and decode the latest on chain contents for an object handle owned by the runtime,
+    /// without tag verification.
     ///
-    /// This refreshes the runtime-owned handle's reference/owner information in the cursor.
-    pub async fn decode_unchecked<T: sui_move::MoveStruct + sui_move::HasKey>(
+    /// This refreshes the reference and owner information for the handle in the cursor.
+    pub async fn decode_unchecked<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey>(
         &mut self,
         obj: &Object<T>,
     ) -> Result<T, Error> {
@@ -449,10 +450,10 @@ impl<'a, S: SuiSigner> Read<'a, S> {
     /// This corresponds to Sui's `Input::Receiving`.
     ///
     /// Receiving is a transaction input mode (the Move framework type
-    /// `sui::transfer::Receiving<T>`), not an on-chain owner kind. This helper only fetches the
+    /// `sui::transfer::Receiving<T>`), not an on chain owner kind. This helper only fetches the
     /// latest reference and does not validate that the object is valid to receive in the current
     /// transaction.
-    pub async fn receiving_object<T: sui_move::MoveStruct + sui_move::HasKey>(
+    pub async fn receiving_object<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey>(
         &mut self,
         object_id: Address,
     ) -> Result<ReceivingObject<T>, Error> {
@@ -476,7 +477,7 @@ impl<'a, S: SuiSigner> Read<'a, S> {
     /// Construct a shared object handle by fetching its initial shared version.
     ///
     /// This corresponds to Sui's `Input::Shared`.
-    pub async fn shared_object<T: sui_move::MoveStruct + sui_move::HasKey>(
+    pub async fn shared_object<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey>(
         &mut self,
         object_id: Address,
         mutability: Mutability,
@@ -510,7 +511,7 @@ impl<'a, S: SuiSigner> Read<'a, S> {
     }
 
     /// Convenience: immutable shared input.
-    pub async fn shared_immutable<T: sui_move::MoveStruct + sui_move::HasKey>(
+    pub async fn shared_immutable<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey>(
         &mut self,
         object_id: Address,
     ) -> Result<SharedObject<T>, Error> {
@@ -518,7 +519,7 @@ impl<'a, S: SuiSigner> Read<'a, S> {
     }
 
     /// Convenience: mutable shared input.
-    pub async fn shared_mutable<T: sui_move::MoveStruct + sui_move::HasKey>(
+    pub async fn shared_mutable<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey>(
         &mut self,
         object_id: Address,
     ) -> Result<SharedObject<T>, Error> {
@@ -530,7 +531,7 @@ impl<'a, S: SuiSigner> Read<'a, S> {
 pub struct Tx<'a, S> {
     rt: &'a mut Runtime<S>,
     sender: Address,
-    ptb: sui_move_ptb::PtbBuilder,
+    ptb: talus_sui_move_ptb::PtbBuilder,
 }
 
 impl<'a, S: SuiSigner> Tx<'a, S> {
@@ -538,35 +539,35 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
     ///
     /// This is useful for accessing less common PTB commands without this crate adding extra
     /// wrappers.
-    pub fn ptb(&self) -> &sui_move_ptb::PtbBuilder {
+    pub fn ptb(&self) -> &talus_sui_move_ptb::PtbBuilder {
         &self.ptb
     }
 
     /// Mutably borrow the underlying PTB builder (escape hatch).
-    pub fn ptb_mut(&mut self) -> &mut sui_move_ptb::PtbBuilder {
+    pub fn ptb_mut(&mut self) -> &mut talus_sui_move_ptb::PtbBuilder {
         &mut self.ptb
     }
 
     /// Add a raw input to the transaction and return its `Argument::Input`.
     pub fn input(
         &mut self,
-        input: sui_move_call::CallArg,
+        input: talus_sui_move_call::CallArg,
     ) -> Result<sui_sdk_types::Argument, Error> {
         Ok(self.ptb.input(input)?)
     }
 
     /// Convert a typed value into an input and return its `Argument::Input`.
-    pub fn arg<A: sui_move_call::ToCallArg>(
+    pub fn arg<A: talus_sui_move_call::ToCallArg>(
         &mut self,
         value: &A,
     ) -> Result<sui_sdk_types::Argument, Error> {
         Ok(self.ptb.arg(value)?)
     }
 
-    /// Add a Move call command from a typed [`sui_move_call::CallSpec`].
+    /// Add a Move call command from a typed [`talus_sui_move_call::CallSpec`].
     pub fn call(
         &mut self,
-        spec: sui_move_call::CallSpec,
+        spec: talus_sui_move_call::CallSpec,
     ) -> Result<sui_sdk_types::Argument, Error> {
         Ok(self.ptb.call(spec)?)
     }
@@ -634,7 +635,7 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
     /// [`Receipt`] with `digest` and any decoded effects, and marks the observed finality as
     /// `Executed`.
     ///
-    /// On success, the runtime applies an effects-derived patch to its cursor, updating
+    /// On success, the runtime applies a patch derived from effects to its cursor, updating
     /// all live [`Object`] and [`ReceivingObject`] handles that match changed objects.
     pub async fn commit(self) -> Result<Receipt, Error> {
         self.commit_with(TxOptions::default()).await
@@ -646,14 +647,14 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
         Self::commit_ptb_with_inner(rt, sender, ptb.finish(), opts).await
     }
 
-    /// Commit a pre-built PTB and wait for checkpoint inclusion.
+    /// Commit an already built PTB and wait for checkpoint inclusion.
     ///
     /// This is the escape hatch for advanced PTB building (coin ops, wiring, etc).
     pub async fn commit_ptb(self, ptb: ProgrammableTransaction) -> Result<Receipt, Error> {
         self.commit_ptb_with(ptb, TxOptions::default()).await
     }
 
-    /// Commit a pre-built PTB using explicit transaction options.
+    /// Commit an already built PTB using explicit transaction options.
     pub async fn commit_ptb_with(
         self,
         ptb: ProgrammableTransaction,
@@ -687,16 +688,16 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
         Ok(receipt)
     }
 
-    /// Dry-run the built PTB (checks enabled) without mutating chain state.
+    /// Simulate the built PTB (checks enabled) without mutating chain state.
     ///
-    /// This does not update runtime-owned handles.
+    /// This does not update handles owned by the runtime.
     pub async fn simulate(&mut self) -> Result<SimulationReceipt, Error> {
         self.simulate_with(SimulateOptions::default()).await
     }
 
-    /// Dry-run the built PTB with explicit simulation options.
+    /// Simulate the built PTB with explicit simulation options.
     ///
-    /// This does not update runtime-owned handles.
+    /// This does not update handles owned by the runtime.
     pub async fn simulate_with(
         &mut self,
         opts: SimulateOptions,
@@ -705,9 +706,9 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
         self.simulate_ptb_with(ptb, opts).await
     }
 
-    /// Dry-run a pre-built PTB (checks enabled) without mutating chain state.
+    /// Simulate an already built PTB, with checks enabled, without mutating chain state.
     ///
-    /// This does not update runtime-owned handles.
+    /// This does not update handles owned by the runtime.
     pub async fn simulate_ptb(
         &mut self,
         ptb: ProgrammableTransaction,
@@ -716,9 +717,9 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
             .await
     }
 
-    /// Dry-run a pre-built PTB with explicit simulation options.
+    /// Simulate an already built PTB with explicit simulation options.
     ///
-    /// This does not update runtime-owned handles.
+    /// This does not update handles owned by the runtime.
     pub async fn simulate_ptb_with(
         &mut self,
         ptb: ProgrammableTransaction,
@@ -727,24 +728,24 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
         Ok(tx::simulate_ptb(&mut self.rt.client, self.sender, ptb, opts).await?)
     }
 
-    /// Dev-inspect the built PTB (checks disabled) to retrieve command outputs for debugging.
+    /// Inspect the built PTB (checks disabled) to retrieve command outputs for debugging.
     ///
-    /// This does not update runtime-owned handles.
+    /// This does not update handles owned by the runtime.
     pub async fn inspect(&mut self) -> Result<InspectReceipt, Error> {
         self.inspect_with(InspectOptions::default()).await
     }
 
-    /// Dev-inspect the built PTB with explicit inspect options.
+    /// Inspect the built PTB with explicit inspect options.
     ///
-    /// This does not update runtime-owned handles.
+    /// This does not update handles owned by the runtime.
     pub async fn inspect_with(&mut self, opts: InspectOptions) -> Result<InspectReceipt, Error> {
         let ptb = self.ptb.clone().finish();
         self.inspect_ptb_with(ptb, opts).await
     }
 
-    /// Dev-inspect a pre-built PTB (checks disabled) to retrieve command outputs for debugging.
+    /// Inspect an already built PTB, with checks disabled, to retrieve command outputs for debugging.
     ///
-    /// This does not update runtime-owned handles.
+    /// This does not update handles owned by the runtime.
     pub async fn inspect_ptb(
         &mut self,
         ptb: ProgrammableTransaction,
@@ -752,9 +753,9 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
         self.inspect_ptb_with(ptb, InspectOptions::default()).await
     }
 
-    /// Dev-inspect a pre-built PTB with explicit inspect options.
+    /// Inspect an already built PTB with explicit inspect options.
     ///
-    /// This does not update runtime-owned handles.
+    /// This does not update handles owned by the runtime.
     pub async fn inspect_ptb_with(
         &mut self,
         ptb: ProgrammableTransaction,
@@ -764,12 +765,12 @@ impl<'a, S: SuiSigner> Tx<'a, S> {
     }
 }
 
-/// Convenience re-exports for downstream code.
+/// Common exports for downstream code.
 ///
 /// This prelude is meant for application code and examples. It includes:
-/// - `sui-move-runtime` core types
-/// - `sui-move-call` prelude (call building)
-/// - `sui-move-ptb` prelude (PTB building)
+/// - `talus-sui-move-runtime` core types
+/// - `talus-sui-move-call` prelude (call building)
+/// - `talus-sui-move-ptb` prelude (PTB building)
 pub mod prelude {
     pub use crate::{
         BcsValue, CheckpointWaitOutcome, CommandOutputs, CursorSnapshot, EnsureSuccessError, Error,
@@ -777,9 +778,9 @@ pub mod prelude {
         Receipt, ReceivingObject, Runtime, SharedObject, SimulateOptions, SimulationReceipt,
         TombstoneReason, Tx, TxOptions,
     };
-    pub use sui_move_call::prelude::*;
-    pub use sui_move_ptb::prelude::*;
     pub use sui_sdk_types::Mutability;
+    pub use talus_sui_move_call::prelude::*;
+    pub use talus_sui_move_ptb::prelude::*;
 }
 
 /// Build and run a transaction in the Read → Tx → Commit mental model.
@@ -793,10 +794,10 @@ pub mod prelude {
 /// The macro returns a **future**, so callers use `.await`:
 ///
 /// ```rust,no_run
-/// use sui_move_runtime::prelude::*;
+/// use talus_sui_move_runtime::prelude::*;
 ///
 /// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
-/// let receipt = sui_move_runtime::tx!(&mut rt, sender => {
+/// let receipt = talus_sui_move_runtime::tx!(&mut rt, sender => {
 ///     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 /// })
 /// .await?;
@@ -810,9 +811,9 @@ pub mod prelude {
 /// **Call list (default commit)**: each statement expression must evaluate to a `CallSpec`.
 ///
 /// ```rust,no_run
-/// # use sui_move_runtime::prelude::*;
+/// # use talus_sui_move_runtime::prelude::*;
 /// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
-/// let _receipt = sui_move_runtime::tx!(&mut rt, sender => {
+/// let _receipt = talus_sui_move_runtime::tx!(&mut rt, sender => {
 ///     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 ///     CallSpec::new("0x1".parse().unwrap(), "m", "g").unwrap();
 /// })
@@ -824,9 +825,9 @@ pub mod prelude {
 /// **Builder form**: opt into direct access to `Tx` (escape hatch for PTB wiring).
 ///
 /// ```rust,no_run
-/// # use sui_move_runtime::prelude::*;
+/// # use talus_sui_move_runtime::prelude::*;
 /// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
-/// let _receipt = sui_move_runtime::tx!(&mut rt, sender, tx => {
+/// let _receipt = talus_sui_move_runtime::tx!(&mut rt, sender, tx => {
 ///     let _out = tx.call(CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap())?;
 /// })
 /// .await?;
@@ -837,19 +838,19 @@ pub mod prelude {
 /// **Action variants**:
 ///
 /// ```rust,no_run
-/// # use sui_move_runtime::prelude::*;
+/// # use talus_sui_move_runtime::prelude::*;
 /// # async fn demo(mut rt: Runtime<impl sui_crypto::SuiSigner>, sender: sui_sdk_types::Address) -> Result<(), Error> {
-/// let _sim = sui_move_runtime::tx!(simulate, &mut rt, sender => {
+/// let _sim = talus_sui_move_runtime::tx!(simulate, &mut rt, sender => {
 ///     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 /// })
 /// .await?;
 ///
-/// let _dbg = sui_move_runtime::tx!(inspect, &mut rt, sender => {
+/// let _dbg = talus_sui_move_runtime::tx!(inspect, &mut rt, sender => {
 ///     CallSpec::new("0x1".parse().unwrap(), "m", "f").unwrap();
 /// })
 /// .await?;
 ///
-/// let _receipt = sui_move_runtime::tx!(
+/// let _receipt = talus_sui_move_runtime::tx!(
 ///     commit_with(TxOptions { finality: Finality::Executed, ..Default::default() }),
 ///     &mut rt,
 ///     sender => {

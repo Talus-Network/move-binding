@@ -1,12 +1,17 @@
 [package]
-name = "sui-move-derive"
-version = "0.1.0"
-edition = "2021"
-description = "Procedural macros for sui-move typed structs."
+name = "talus-sui-move-derive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Procedural macros for typed Move structs."
 readme = "README.md"
+publish = ["crates-io"]
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/talus-sui-move-derive"
+keywords = ["sui", "move", "blockchain", "proc-macro"]
+categories = ["development-tools::procedural-macro-helpers"]
 
 [lib]
 proc-macro = true
@@ -14,7 +19,9 @@ proc-macro = true
 [dependencies]
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
-syn = { workspace = true, features = ["full"] }
+syn = { workspace = true }
 
+# This development dependency uses only a path and compiles the macro examples locally.
+# Cargo omits it from the published package manifest.
 [dev-dependencies]
-sui-move = { path = "../sui-move" }
+talus-sui-move = { path = "../sui-move" }

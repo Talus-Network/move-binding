@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
-use sui_move::prelude::*;
-use sui_move::{parse_address, parse_identifier};
+use talus_sui_move::prelude::*;
+use talus_sui_move::{parse_address, parse_identifier};
 
-/// Example package-defined type used to demonstrate the kernel type-tag API.
+/// Example type defined by a package and used to demonstrate the kernel type tag API.
 ///
 /// Framework declarations such as `0x2::coin::Coin` are intentionally not exported from
-/// `sui-move`; they should be generated from package metadata like user-defined types.
+/// `talus-sui-move`; they should be generated from package metadata like types defined by users.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Counter {
     value: u64,
@@ -31,7 +31,7 @@ impl MoveStruct for Counter {
 impl HasStore for Counter {}
 
 fn main() {
-    assert_eq!(sui_move::type_tag_of::<u64>(), TypeTag::U64);
+    assert_eq!(talus_sui_move::type_tag_of::<u64>(), TypeTag::U64);
 
     match Counter::type_tag_static() {
         TypeTag::Struct(tag) => {

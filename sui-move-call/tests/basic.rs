@@ -1,22 +1,22 @@
 use std::str::FromStr;
 
-use sui_move_call::{
+use sui_sdk_types::{Address, Digest, FundsWithdrawal, ObjectReference, TypeTag, WithdrawFrom};
+use talus_sui_move_call::{
     CallArg, CallArgError, CallSpec, MoveObject, ReceivingMoveObject, SharedMoveObject, ToCallArg,
     ToCallArgMut,
 };
-use sui_sdk_types::{Address, Digest, FundsWithdrawal, ObjectReference, TypeTag, WithdrawFrom};
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, store")]
 struct ID {
     bytes: Address,
 }
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
     id: ID,
 }
 
-#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+#[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Demo {
     id: UID,
 }

@@ -1,4 +1,4 @@
-//! Implementations of [`MoveType`](crate::MoveType) and ability markers for Rust built-ins.
+//! Implementations of [`MoveType`](crate::MoveType) and ability markers for standard Rust types.
 //!
 //! This module provides mappings for:
 //! - integer and boolean primitives (`u8`, `u16`, `u32`, `u64`, `u128`, `bool`)

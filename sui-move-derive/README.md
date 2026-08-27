@@ -1,18 +1,21 @@
-# sui-move-derive
+# talus-sui-move-derive
 
-Procedural macros for [`sui-move`](../sui-move/README.md): define Move-shaped Rust types with minimal boilerplate.
+Procedural macros for [`talus-sui-move`](https://docs.rs/talus-sui-move): define Rust types that
+represent Move types with minimal boilerplate. The package is `talus-sui-move-derive`; Rust code
+imports it as `talus_sui_move_derive`.
 
-This crate exists to solve one problem: **turn a Rust struct into a Move-shaped type** (correct
-`TypeTag`/`StructTag` + ability markers) so it can be used with `sui-move`’s type-tag plumbing and
-tag-checked decoding.
+This crate exists to solve one problem: **turn a Rust struct into a representation of a Move type**
+with the correct `TypeTag`, `StructTag`, and ability markers. It can then use the type tag plumbing
+and verified decoding in `talus-sui-move`.
 
 ## Where it fits
 
-In the repository’s layered stack (`MODEL.md`), `sui-move-derive` is a convenience layer for the
-bottom type system (`sui-move`):
+In the repository’s layered
+[stack](https://github.com/Talus-Network/move-binding/blob/main/MODEL.md),
+`talus-sui-move-derive` is a convenience layer for the bottom type system (`talus-sui-move`):
 
 - you describe the Move identity (`address`, `module`, `abilities`) as attributes,
-- the macro generates the corresponding `sui_move::MoveType` / `sui_move::MoveStruct` impls and
+- the macro generates the corresponding `talus_sui_move::MoveType` / `talus_sui_move::MoveStruct` impls and
   ability marker impls,
 - higher layers (call/PTB/runtime) consume those traits for typed interactions.
 
@@ -21,8 +24,8 @@ bottom type system (`sui-move`):
 Given a struct like:
 
 ```rust,no_run
-use sui_move::prelude::*;
-use sui_move_derive::move_struct;
+use talus_sui_move::prelude::*;
+use talus_sui_move_derive::move_struct;
 
 #[move_struct(address = "0x1", module = "demo", abilities = "copy, store")]
 pub struct Point {
@@ -42,34 +45,34 @@ match tag {
 
 The macro generates:
 
-- `impl sui_move::MoveType` and `impl sui_move::MoveStruct`
+- `impl talus_sui_move::MoveType` and `impl talus_sui_move::MoveStruct`
 - Ability marker impls (`HasKey`, `HasStore`, `HasCopy`, `HasDrop`) based on `abilities = "..."`
 - `serde` derives (without requiring your crate to depend on `serde` directly)
 - Optional injected `PhantomData` fields for phantom type params
-- Compile-time validation for common mistakes (e.g. `key` requires an `id: UID` field)
+- Validation during compilation for common mistakes (e.g. `key` requires an `id: UID` field)
 
 ## Recommended usage
 
-Most users should depend on `sui-move` and enable its `derive` feature (it re-exports these macros):
+Most users should depend on `talus-sui-move` and enable its `derive` feature, which exports these macros:
 
 ```toml
 [dependencies]
-sui-move = { path = "../sui-move", features = ["derive"] }
+talus-sui-move = { version = "=0.2.0-rc.1", features = ["derive"] }
 ```
 
 Then use:
 
 ```rust,ignore
-use sui_move::move_struct;
+use talus_sui_move::move_struct;
 ```
 
-You can also depend on `sui-move-derive` directly, but you must still depend on `sui-move` because
-the generated impls reference it.
+You can also depend on `talus-sui-move-derive` directly, but you must still depend on
+`talus-sui-move` because the generated impls reference it.
 
 ## `#[move_module]`
 
-`#[move_module]` is currently a no-op marker attribute. It can be used to annotate Rust `mod`
-blocks that correspond to Move modules.
+`#[move_module]` currently leaves the module unchanged. It can annotate Rust `mod` blocks that
+correspond to Move modules.
 
 ## `#[move_struct(...)]` reference
 
@@ -83,7 +86,7 @@ Optional arguments:
 - `address_fn = "path::to::fn"`: Function returning the Move address to use for `StructTag`s.
   `address` remains the default/documented address.
 - `name = "..."`: Override the Move struct name (defaults to the Rust struct name)
-- `abilities = "key, store, copy, drop"`: Move abilities (comma-separated)
+- `abilities = "key, store, copy, drop"`: Move abilities (separated by commas)
   - `copy` implies `drop`
   - `key` and `copy` are mutually exclusive
 - `phantoms = "T, U"`: Mark type parameters as phantom and inject `PhantomData` fields
@@ -94,30 +97,30 @@ Optional arguments:
 
 The macro tries to make the “Move rules” visible as normal Rust type errors:
 
-- Every type parameter gets a `T: sui_move::MoveType` bound.
+- Every type parameter gets a `T: talus_sui_move::MoveType` bound.
 - If the struct has a Move ability (e.g. `store`), the macro adds the corresponding bounds to
-  each non-phantom field type (e.g. `field_ty: sui_move::HasStore`).
+  each field type that is not phantom (e.g. `field_ty: talus_sui_move::HasStore`).
 - For generic fields like `Vec<T>`, this naturally pushes requirements onto `T` (e.g.
   `Vec<T>: HasStore` implies `T: HasStore`).
 
 You can satisfy those requirements either by:
 
-- writing normal Rust bounds (`struct Vault<T: sui_move::HasStore> { ... }`), or
+- writing normal Rust bounds (`struct Vault<T: talus_sui_move::HasStore> { ... }`), or
 - using `type_abilities = "T: store"` to have the macro add the ability bounds for you.
 
 ## Examples
 
-### `key` objects require package-defined `id: UID`
+### `key` objects require an `id: UID` type defined by a package
 
 ```rust,no_run
 use std::marker::PhantomData;
-use sui_move::prelude::Address;
-use sui_move_derive::move_struct;
+use talus_sui_move::prelude::Address;
+use talus_sui_move_derive::move_struct;
 
 /// Local package declaration for `0x2::object::ID`.
 ///
-/// Framework types are ordinary Move declarations from the type-kernel perspective. In production
-/// this shape should come from generated package bindings rather than from `sui-move` itself.
+/// Framework types are ordinary Move declarations from the type kernel perspective. In production
+/// this shape should come from generated package bindings rather than from `talus-sui-move` itself.
 #[move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
 pub struct ID {
     pub bytes: Address,
@@ -125,7 +128,7 @@ pub struct ID {
 
 /// Local package declaration for `0x2::object::UID`.
 ///
-/// A `key` object is recognized by an `id` field whose type is a package-defined `UID` shape.
+/// A `key` object is recognized by an `id` field whose type is a `UID` shape defined by a package.
 #[move_struct(address = "0x2", module = "object", abilities = "store")]
 pub struct UID {
     pub id: ID,
@@ -143,7 +146,7 @@ pub struct Vault<T> {
     pub balance: Vec<T>,
 }
 
-let _tag = <Vault<u64> as sui_move::MoveType>::type_tag_static();
+let _tag = <Vault<u64> as talus_sui_move::MoveType>::type_tag_static();
 let _value = Vault::<u64> {
     id: UID {
         id: ID {
@@ -158,7 +161,7 @@ let _value = Vault::<u64> {
 If you try to declare a `key` struct without an `id` field, it fails at compile time:
 
 ```rust,compile_fail
-use sui_move_derive::move_struct;
+use talus_sui_move_derive::move_struct;
 
 #[move_struct(address = "0x1", module = "broken", abilities = "key, store")]
 pub struct MissingId {
@@ -169,9 +172,9 @@ pub struct MissingId {
 Similarly, invalid ability combinations are rejected:
 
 ```rust,compile_fail
-use sui_move_derive::move_struct;
+use talus_sui_move_derive::move_struct;
 
-/// Minimal package-defined UID fixture for the compile-fail example.
+/// Minimal UID fixture defined by a package for the compilation failure example.
 #[move_struct(address = "0x2", module = "object", abilities = "store")]
 pub struct UID {
     pub id: u64,

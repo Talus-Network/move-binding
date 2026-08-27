@@ -1,4 +1,4 @@
-//! Optional runtime helpers: generate a `TxExt` trait implemented for `sui-move-runtime`.
+//! Optional runtime helpers: generate a `TxExt` trait implemented for `talus-sui-move-runtime`.
 //!
 //! This layer is intentionally thin: the generated methods only append a `MoveCall` command by
 //! calling `Tx::call(module::function(...))`. Committing/simulating/inspecting stays explicit.
@@ -37,7 +37,7 @@ pub(crate) fn render_tx_ext(pkg: &NormalizedPackage, opts: &RenderOptions) -> To
     }
 
     let doc = doc_lines(&[
-        "Generated `sui-move-runtime` helpers for this package.".to_string(),
+        "Generated `talus-sui-move-runtime` helpers for this package.".to_string(),
         String::new(),
         "Each method appends a `MoveCall` command by calling `Tx::call(...)`.".to_string(),
         "Committing the transaction is still explicit: call `tx.commit().await`.".to_string(),
@@ -49,9 +49,9 @@ pub(crate) fn render_tx_ext(pkg: &NormalizedPackage, opts: &RenderOptions) -> To
             #(#trait_methods)*
         }
 
-        impl<'a, S> TxExt for sui_move_runtime::Tx<'a, S>
+        impl<'a, S> TxExt for talus_sui_move_runtime::Tx<'a, S>
         where
-            S: sui_move_runtime::SuiSigner,
+            S: talus_sui_move_runtime::SuiSigner,
         {
             #(#impl_methods)*
         }
@@ -101,14 +101,14 @@ fn render_method(
     let signature = quote! {
         #doc
         fn #tx_method_ident #fn_generics (&mut self, #(#params),*)
-            -> Result<sui_sdk_types::Argument, sui_move_runtime::Error>
+            -> Result<sui_sdk_types::Argument, talus_sui_move_runtime::Error>
             #where_clause
         ;
     };
 
     let implementation = quote! {
         fn #tx_method_ident #fn_generics (&mut self, #(#params),*)
-            -> Result<sui_sdk_types::Argument, sui_move_runtime::Error>
+            -> Result<sui_sdk_types::Argument, talus_sui_move_runtime::Error>
             #where_clause
         {
             let spec = #call_expr?;
@@ -127,7 +127,7 @@ fn render_params_and_args(
     let sm_call = if opts.use_aliases {
         quote! { sm_call }
     } else {
-        quote! { sui_move_call }
+        quote! { talus_sui_move_call }
     };
 
     let mut params = Vec::new();

@@ -3,12 +3,12 @@
 
 use std::borrow::Borrow;
 
-use sui_move_call::{CallArg, CallArgError, CallSpec, CallSpecError, CallTarget, ToCallArg};
 use sui_sdk_types::{
     Address, Argument, Command, FundsWithdrawal, MakeMoveVector, MergeCoins, MoveCall, Mutability,
     ObjectReference, Owner, ProgrammableTransaction, Publish, SharedInput, SplitCoins,
     TransferObjects, TypeTag, WithdrawFrom,
 };
+use talus_sui_move_call::{CallArg, CallArgError, CallSpec, CallSpecError, CallTarget, ToCallArg};
 
 /// Fixed shared object ID for `0x2::clock::Clock`.
 pub const CLOCK_OBJECT_ID: Address = Address::from_static("0x6");
@@ -65,7 +65,7 @@ pub enum BuildError {
 /// to those indices.
 ///
 /// `PtbBuilder` is the small “allocation” layer that:
-/// - collects inputs (Sui `Input`s, via `sui_move_call::CallArg`) into a PTB input table,
+/// - collects inputs (Sui `Input`s, via `talus_sui_move_call::CallArg`) into a PTB input table,
 /// - emits PTB commands,
 /// - returns the final `ProgrammableTransaction`.
 ///
@@ -85,7 +85,7 @@ impl PtbBuilder {
 
     /// Borrow the accumulated PTB inputs.
     ///
-    /// These are the canonical Sui `Input`s (re-exported as `sui_move_call::CallArg`).
+    /// These are the canonical Sui `Input`s, also exported as `talus_sui_move_call::CallArg`.
     pub fn inputs(&self) -> &[CallArg] {
         &self.inputs
     }
@@ -184,8 +184,8 @@ impl PtbBuilder {
     ///
     /// # Example
     /// ```
-    /// use sui_move_call::CallArg;
-    /// use sui_move_ptb::PtbBuilder;
+    /// use talus_sui_move_call::CallArg;
+    /// use talus_sui_move_ptb::PtbBuilder;
     /// use sui_sdk_types::Argument;
     ///
     /// let mut tx = PtbBuilder::new();
@@ -202,14 +202,14 @@ impl PtbBuilder {
 
     /// Convert a typed value into an input and return the corresponding `Argument::Input`.
     ///
-    /// This uses [`ToCallArg`] from `sui-move-call`, so:
+    /// This uses [`ToCallArg`] from `talus-sui-move-call`, so:
     /// - `T: MoveType` becomes `Input::Pure(bcs(T))`
     /// - typed object handles become the corresponding object input kinds
     pub fn arg<A: ToCallArg>(&mut self, value: &A) -> Result<Argument, BuildError> {
         self.input(value.to_call_arg()?)
     }
 
-    /// Add pre-encoded BCS bytes as a pure PTB input.
+    /// Add already encoded BCS bytes as a pure PTB input.
     ///
     /// Prefer [`Self::arg`] when the Rust type is available. Use this for dynamic ABI edges where
     /// the exact Move type is discovered at runtime and the value has already been BCS encoded.
@@ -250,8 +250,8 @@ impl PtbBuilder {
 
     /// Add an object input using ownership metadata returned by Sui RPC.
     ///
-    /// Shared-like objects become `Input::Shared`; immutable/address-owned objects can be used
-    /// only when immutable access was requested.
+    /// Objects with a shared input shape become `Input::Shared`. Immutable objects and objects
+    /// owned by an address require immutable access.
     pub fn object_from_owner<O, M>(
         &mut self,
         object: &ObjectReference,
@@ -307,7 +307,7 @@ impl PtbBuilder {
     /// identical ones when possible), emits `Command::MoveCall`, and returns `Argument::Result`
     /// pointing at the command result.
     ///
-    /// If the called function returns multiple values, you can access sub-results using
+    /// If the called function returns multiple values, you can access nested results using
     /// `Argument::nested`.
     pub fn call(&mut self, spec: CallSpec) -> Result<Argument, BuildError> {
         let arguments = spec
@@ -331,7 +331,7 @@ impl PtbBuilder {
     ///
     /// Use this for composed PTBs where some arguments are previous command results instead of
     /// fresh transaction inputs. Generated bindings should still provide the [`CallTarget`], so
-    /// package/module/function/type-argument identity does not fall back to hand-written strings.
+    /// package/module/function/type argument identity does not fall back to handwritten strings.
     pub fn call_target(
         &mut self,
         target: CallTarget,
@@ -403,8 +403,8 @@ impl PtbBuilder {
         Ok(Argument::Result(cmd_idx))
     }
 
-    /// Build a typed Move `vector<T>` from already-built PTB arguments.
-    pub fn move_vector<T: sui_move::MoveType>(
+    /// Build a typed Move `vector<T>` from already built PTB arguments.
+    pub fn move_vector<T: talus_sui_move::MoveType>(
         &mut self,
         elements: Vec<Argument>,
     ) -> Result<Argument, BuildError> {
@@ -426,7 +426,7 @@ impl PtbBuilder {
         Ok(Argument::Result(cmd_idx))
     }
 
-    /// Return a nested result argument for a multi-return command.
+    /// Return a nested result argument for a command that returns multiple values.
     pub fn nested_result(&self, argument: Argument, ix: u16) -> Result<Argument, BuildError> {
         nested_result(argument, ix)
     }
@@ -446,8 +446,8 @@ impl PtbBuilder {
 ///
 /// # Example
 /// ```
-/// use sui_move_call::CallSpec;
-/// use sui_move_ptb::ptb;
+/// use talus_sui_move_call::CallSpec;
+/// use talus_sui_move_ptb::ptb;
 /// use sui_sdk_types::Address;
 ///
 /// let package = Address::from_hex("0x1").unwrap();
@@ -469,7 +469,7 @@ pub fn ptb(
     Ok(builder.finish())
 }
 
-/// Return a nested result argument for a multi-return command.
+/// Return a nested result argument for a command that returns multiple values.
 ///
 /// This is a checked wrapper around [`Argument::nested`] so transaction builders can propagate a
 /// normal [`BuildError`] instead of panicking or unwrapping.
@@ -481,17 +481,17 @@ pub fn nested_result(argument: Argument, ix: u16) -> Result<Argument, BuildError
 
 /// Build a `ProgrammableTransaction` using a scoped `PtbBuilder`.
 ///
-/// This is a thin macro wrapper around [`ptb`]. It exists purely for call-site ergonomics.
+/// This is a thin macro wrapper around [`ptb()`]. It exists purely for call site ergonomics.
 ///
 /// # Examples
 /// ```rust
-/// use sui_move_call::CallSpec;
+/// use talus_sui_move_call::CallSpec;
 /// use sui_sdk_types::Address;
 ///
 /// let package = Address::from_hex("0x1").unwrap();
 /// let spec = CallSpec::new(package, "m", "f").unwrap();
 ///
-/// let pt = sui_move_ptb::ptb!(tx => {
+/// let pt = talus_sui_move_ptb::ptb!(tx => {
 ///     tx.call(spec)?;
 ///     Ok(())
 /// })
@@ -501,13 +501,13 @@ pub fn nested_result(argument: Argument, ix: u16) -> Result<Argument, BuildError
 /// ```
 ///
 /// ```rust
-/// use sui_move_call::CallSpec;
+/// use talus_sui_move_call::CallSpec;
 /// use sui_sdk_types::Address;
 ///
 /// let package = Address::from_hex("0x1").unwrap();
 /// let spec = CallSpec::new(package, "m", "f").unwrap();
 ///
-/// let pt = sui_move_ptb::ptb! { spec; }.unwrap();
+/// let pt = talus_sui_move_ptb::ptb! { spec; }.unwrap();
 /// assert_eq!(pt.commands.len(), 1);
 /// ```
 #[macro_export]
@@ -525,11 +525,11 @@ macro_rules! ptb {
     }};
 }
 
-/// Convenience re-exports for downstream code.
+/// Common exports for downstream code.
 pub mod prelude {
     pub use crate::{ptb, BuildError, PtbBuilder, CLOCK_OBJECT_ID};
-    pub use sui_move_call::prelude::*;
     pub use sui_sdk_types::{Argument, Command, ProgrammableTransaction};
+    pub use talus_sui_move_call::prelude::*;
 }
 
 fn call_arg_object_id(input: &CallArg) -> Option<Address> {
