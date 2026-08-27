@@ -4,18 +4,18 @@
 use std::marker::PhantomData;
 use std::str::FromStr;
 
-use sui_move::{HasKey, MoveStruct, MoveType};
 use sui_sdk_types::{Address, Identifier, Mutability, ObjectReference, SharedInput, TypeTag};
+use talus_sui_move::{HasKey, MoveStruct, MoveType};
 
 /// Canonical Sui transaction input kind.
 ///
-/// This is a re-export of [`sui_sdk_types::Input`]. `sui-move-call` uses it directly so this
-/// crate can represent every on-chain input kind without re-modeling Sui's wire types.
+/// This type is an alias for [`sui_sdk_types::Input`]. `talus-sui-move-call` uses it directly so
+/// this crate can represent every Sui transaction input kind without duplicating Sui's wire types.
 ///
 /// In this crate, call arguments are typically produced via [`ToCallArg`].
 pub use sui_sdk_types::Input as CallArg;
 
-/// Typed object handle for key-bearing Move structs.
+/// Typed object handle for Move structs that have the `key` ability.
 ///
 /// This is a small wrapper around [`ObjectReference`] that carries the Rust type `T`.
 ///
@@ -28,13 +28,13 @@ pub use sui_sdk_types::Input as CallArg;
 /// # Example
 /// ```
 /// use std::str::FromStr;
-/// use sui_move_call::MoveObject;
+/// use talus_sui_move_call::MoveObject;
 /// use sui_sdk_types::{Address, Digest, ObjectReference};
 ///
-/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 /// # struct UID { id: u64 }
 /// #
-/// #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+/// #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 /// struct Demo {
 ///     id: UID,
 /// }
@@ -82,13 +82,13 @@ impl<T: MoveStruct + HasKey> MoveObject<T> {
 /// # Example
 /// ```
 /// use std::str::FromStr;
-/// use sui_move_call::SharedMoveObject;
+/// use talus_sui_move_call::SharedMoveObject;
 /// use sui_sdk_types::Address;
 ///
-/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 /// # struct UID { id: u64 }
 /// #
-/// #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+/// #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 /// struct SharedThing {
 ///     id: UID,
 /// }
@@ -114,7 +114,7 @@ impl<T: MoveStruct + HasKey> SharedMoveObject<T> {
         Self::new(object_id, initial_shared_version, Mutability::Mutable)
     }
 
-    /// Create a non-exclusive-write shared object handle.
+    /// Create a shared object handle with `NonExclusiveWrite` mutability.
     pub fn non_exclusive_write(object_id: Address, initial_shared_version: u64) -> Self {
         Self::new(
             object_id,
@@ -131,7 +131,7 @@ impl<T: MoveStruct + HasKey> SharedMoveObject<T> {
         }
     }
 
-    /// Borrow the underlying shared-input description.
+    /// Borrow the underlying shared input description.
     pub fn shared_input(&self) -> &SharedInput {
         &self.input
     }
@@ -161,9 +161,9 @@ impl<T: MoveStruct + HasKey> SharedMoveObject<T> {
 ///
 /// This corresponds to Sui's `Input::Receiving(ObjectReference)`.
 ///
-/// Receiving is a **transaction input mode**, not an on-chain owner kind. It is used for the Move
-/// framework concept `sui::transfer::Receiving<T>`: an ephemeral per-transaction “receiving
-/// ticket” that can be consumed by `sui::transfer::receive`/`public_receive`.
+/// Receiving is a **transaction input mode**, not an owner kind recorded on chain. It is used for
+/// the Move framework concept `sui::transfer::Receiving<T>`: a temporary “receiving ticket” that
+/// can be consumed by `sui::transfer::receive`/`public_receive` during one transaction.
 ///
 /// This wrapper does not validate whether the referenced object can be received in the current
 /// transaction; invalid uses are rejected by Sui.
@@ -171,13 +171,13 @@ impl<T: MoveStruct + HasKey> SharedMoveObject<T> {
 /// # Example
 /// ```
 /// use std::str::FromStr;
-/// use sui_move_call::ReceivingMoveObject;
+/// use talus_sui_move_call::ReceivingMoveObject;
 /// use sui_sdk_types::{Address, Digest, ObjectReference};
 ///
-/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 /// # struct UID { id: u64 }
 /// #
-/// #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+/// #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 /// struct ReceivingThing {
 ///     id: UID,
 /// }
@@ -232,14 +232,14 @@ pub enum CallArgError {
     Tombstoned {
         /// Object id that was attempted to be used as an argument.
         object_id: Address,
-        /// Human-readable reason (deleted, wrapped, not-exist, ...).
+        /// Explanation suitable for display, such as deleted, wrapped, or nonexistent.
         reason: &'static str,
     },
 
     /// The referenced object kind does not match what the conversion requires.
     ///
-    /// This is primarily used by higher layers that classify on-chain ownership and choose the
-    /// correct Sui input mode (owned/immutable vs shared).
+    /// This is primarily used by higher layers that classify ownership from chain state and choose
+    /// the correct Sui input mode (owned/immutable vs shared).
     #[error("object {object_id} has kind {actual}, expected {expected}")]
     ObjectKind {
         /// Object id that was attempted to be used as an argument.
@@ -266,16 +266,16 @@ pub enum CallArgError {
 /// conversion only needs an `&self`.
 ///
 /// `ToCallArg` is intentionally generic:
-/// - for `T: MoveType`, it returns a `CallArg::Pure` by BCS-encoding the value
+/// - for `T: MoveType`, it returns a `CallArg::Pure` by encoding the value with BCS
 /// - for object handle types, it returns the appropriate object input
 ///
-/// Higher layers may implement `ToCallArg` for runtime-owned handles. Those implementations can
-/// fail even without BCS encoding errors (for example, if the handle is stale/tombstoned or if its
-/// on-chain kind makes it invalid for the requested input mode).
+/// Higher layers may implement `ToCallArg` for handles owned by the runtime. Those implementations
+/// can fail even without BCS encoding errors, for example if the handle is stale or its current
+/// owner kind makes it invalid for the requested input mode.
 ///
 /// # Example
 /// ```
-/// use sui_move_call::{CallArg, ToCallArg};
+/// use talus_sui_move_call::{CallArg, ToCallArg};
 ///
 /// let arg = 7u64.to_call_arg().unwrap();
 /// let CallArg::Pure(bytes) = arg else {
@@ -372,9 +372,9 @@ pub enum CallSpecError {
 
 /// Move call target without encoded arguments.
 ///
-/// This is the lower-level boundary for PTB composition: generated code owns package, module,
-/// function, and type arguments, while `sui-move-ptb` can wire arbitrary PTB `Argument`s including
-/// previous command results.
+/// This is the lower level boundary for PTB composition: generated code owns package, module,
+/// function, and type arguments, while `talus-sui-move-ptb` can wire arbitrary PTB `Argument`s,
+/// including previous command results.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallTarget {
     /// Package ID that contains the Move module.
@@ -418,19 +418,19 @@ impl CallTarget {
 
 /// A description of a Move function call.
 ///
-/// A `CallSpec` carries the call target plus already-encoded arguments. It is designed to be
-/// consumed by a transaction-building layer.
+/// A `CallSpec` carries the call target plus already encoded arguments. It is designed to be
+/// consumed by a transaction building layer.
 ///
 /// # Example
 /// ```
 /// use std::str::FromStr;
-/// use sui_move_call::{CallSpec, MoveObject};
+/// use talus_sui_move_call::{CallSpec, MoveObject};
 /// use sui_sdk_types::{Address, Digest, ObjectReference, TypeTag};
 ///
-/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 /// # struct UID { id: u64 }
 /// #
-/// #[sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
+/// #[talus_sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
 /// struct Vault {
 ///     id: UID,
 /// }
@@ -501,8 +501,8 @@ impl CallSpec {
 
     /// Append an argument by converting it into a `CallArg`.
     ///
-    /// This can fail for BCS encoding errors (pure values) and, for higher-layer object handles,
-    /// for handle state errors (tombstoned/stale handles, kind mismatches, etc.).
+    /// This can fail because a pure value cannot be encoded with BCS or because a runtime object
+    /// handle is stale, tombstoned, or incompatible with the requested input kind.
     pub fn push_arg<A: ToCallArg>(&mut self, arg: &A) -> Result<(), CallArgError> {
         self.arguments.push(arg.to_call_arg()?);
         Ok(())
@@ -526,12 +526,12 @@ impl CallSpec {
     }
 }
 
-/// Convenience re-exports for downstream code.
+/// Common exports for downstream code.
 pub mod prelude {
     pub use crate::{
         CallArg, CallArgError, CallSpec, CallSpecError, CallTarget, MoveObject, ObjectArg,
         ReceivingMoveObject, SharedMoveObject, ToCallArg, ToCallArgMut,
     };
-    pub use sui_move::prelude::*;
     pub use sui_sdk_types::Mutability;
+    pub use talus_sui_move::prelude::*;
 }

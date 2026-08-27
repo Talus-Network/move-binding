@@ -4,8 +4,8 @@ use std::marker::PhantomData;
 use std::sync::{Arc, Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
-use sui_move_call::{CallArg, ObjectArg, ToCallArg, ToCallArgMut};
 use sui_sdk_types::{Address, Mutability, ObjectReference, Owner, SharedInput};
+use talus_sui_move_call::{CallArg, ObjectArg, ToCallArg, ToCallArgMut};
 
 use crate::effects;
 use crate::tx;
@@ -81,35 +81,35 @@ struct TrackedObjectSnapshot {
     tombstone: Option<crate::TombstoneReason>,
 }
 
-/// Runtime-owned handle for an on-chain object used as a transaction input.
+/// Handle owned by the runtime for an on chain object used as a transaction input.
 ///
 /// This is the ergonomic “seamless handle” variant: it carries the Rust type `T` while storing
 /// the mutable `ObjectReference` behind interior mutability. The runtime updates it after commit.
 ///
-/// Unlike `sui-move-call::MoveObject<T>`, this handle also tracks:
-/// - the latest known on-chain owner kind (owned/immutable/shared/...)
+/// Unlike `talus-sui-move-call::MoveObject<T>`, this handle also tracks:
+/// - the latest known on chain owner kind (owned/immutable/shared/...)
 /// - tombstone status (deleted/wrapped/not-exist)
 ///
 /// When converted into a `CallArg`, the handle chooses the correct Sui input shape based on its
 /// current owner kind:
-/// - immutable/address-owned → `Input::ImmutableOrOwned(ObjectReference)`
-/// - shared-like (`Owner::Shared` or `Owner::ConsensusAddress`) → `Input::Shared(SharedInput)` (immutable by default)
+/// - immutable or address owned → `Input::ImmutableOrOwned(ObjectReference)`
+/// - shared input shape (`Owner::Shared` or `Owner::ConsensusAddress`) → `Input::Shared(SharedInput)` (immutable by default)
 ///
 /// If the object becomes a child object, is tombstoned, or the owner kind is unknown, conversion
-/// fails early with a [`sui_move_call::CallArgError`].
+/// fails early with a [`talus_sui_move_call::CallArgError`].
 ///
-/// `Object<T>` implements [`ToCallArg`], so you can pass it to `sui-move-call` interface functions
+/// `Object<T>` implements [`ToCallArg`], so you can pass it to `talus-sui-move-call` interface functions
 /// that accept `&impl ToCallArg` and push it into a `CallSpec`.
 ///
 /// # Example
 /// ```rust,no_run
-/// use sui_move_runtime::prelude::*;
+/// use talus_sui_move_runtime::prelude::*;
 ///
-/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 /// # struct UID {
 /// #     id: u64,
 /// # }
-/// # #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key, store")]
+/// # #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key, store")]
 /// # struct Demo {
 /// #     id: UID,
 /// # }
@@ -162,13 +162,13 @@ impl<T> Object<T> {
     ///
     /// This value is updated after [`crate::Tx::commit`] (if the object was changed by the
     /// committed transaction). It is not automatically refreshed when other transactions mutate
-    /// the object on-chain.
+    /// the object on chain.
     pub fn reference(&self) -> ObjectReference {
         self.cell.reference()
     }
 
-    /// Return an immutable shared view of this object, if it is shared-like on-chain.
-    pub fn shared_immutable(&self) -> Result<SharedObject<T>, sui_move_call::CallArgError> {
+    /// Return an immutable shared view of this object, if it has a shared input shape on chain.
+    pub fn shared_immutable(&self) -> Result<SharedObject<T>, talus_sui_move_call::CallArgError> {
         let initial_shared_version = self.shared_start_version()?;
         Ok(SharedObject::immutable(
             self.object_id(),
@@ -176,8 +176,8 @@ impl<T> Object<T> {
         ))
     }
 
-    /// Return a mutable shared view of this object, if it is shared-like on-chain.
-    pub fn shared_mutable(&self) -> Result<SharedObject<T>, sui_move_call::CallArgError> {
+    /// Return a mutable shared view of this object, if it has a shared input shape on chain.
+    pub fn shared_mutable(&self) -> Result<SharedObject<T>, talus_sui_move_call::CallArgError> {
         let initial_shared_version = self.shared_start_version()?;
         Ok(SharedObject::mutable(
             self.object_id(),
@@ -185,18 +185,18 @@ impl<T> Object<T> {
         ))
     }
 
-    /// Return a receiving view of this object, if it is address-owned.
+    /// Return a receiving view of this object, if it is owned by an address.
     ///
     /// Receiving is a transaction input mode used for `sui::transfer::Receiving<T>`: it allows
-    /// receiving an object that was transferred to an address that is also an object ID (transfer-to-object).
+    /// receiving an object that was transferred to an address that is also an object ID.
     ///
     /// This helper validates only the coarse owner kind:
-    /// - allowed: address-owned objects
-    /// - rejected: shared-like, immutable, child objects, tombstoned objects
+    /// - allowed: objects owned by an address
+    /// - rejected: shared input shapes, immutable objects, child objects, and tombstoned objects
     ///
-    /// On-chain, Sui also checks that the object can be received through the specific parent
-    /// object you prove mutable access to (this runtime does not try to pre-validate that).
-    pub fn receiving(&self) -> Result<ReceivingObject<T>, sui_move_call::CallArgError> {
+    /// On chain, Sui also checks that the object can be received through the specific parent
+    /// object for which you prove mutable access. This runtime does not validate that in advance.
+    pub fn receiving(&self) -> Result<ReceivingObject<T>, talus_sui_move_call::CallArgError> {
         self.ensure_not_tombstoned()?;
 
         let owner = self.cell.owner.read().expect("poisoned object lock");
@@ -205,7 +205,7 @@ impl<T> Object<T> {
                 cell: Arc::clone(&self.cell),
                 phantom: PhantomData,
             }),
-            other => Err(sui_move_call::CallArgError::ObjectKind {
+            other => Err(talus_sui_move_call::CallArgError::ObjectKind {
                 object_id: self.object_id(),
                 expected: "address-owned",
                 actual: other.label(),
@@ -213,9 +213,9 @@ impl<T> Object<T> {
         }
     }
 
-    fn ensure_not_tombstoned(&self) -> Result<(), sui_move_call::CallArgError> {
+    fn ensure_not_tombstoned(&self) -> Result<(), talus_sui_move_call::CallArgError> {
         if let Some(reason) = self.cell.tombstone_reason() {
-            return Err(sui_move_call::CallArgError::Tombstoned {
+            return Err(talus_sui_move_call::CallArgError::Tombstoned {
                 object_id: self.object_id(),
                 reason: reason.label(),
             });
@@ -223,13 +223,13 @@ impl<T> Object<T> {
         Ok(())
     }
 
-    fn shared_start_version(&self) -> Result<u64, sui_move_call::CallArgError> {
+    fn shared_start_version(&self) -> Result<u64, talus_sui_move_call::CallArgError> {
         self.ensure_not_tombstoned()?;
 
         let owner = self.cell.owner.read().expect("poisoned object lock");
         let kind = tx::classify_owner(&owner);
         if !kind.is_shared_like() {
-            return Err(sui_move_call::CallArgError::ObjectKind {
+            return Err(talus_sui_move_call::CallArgError::ObjectKind {
                 object_id: self.object_id(),
                 expected: "shared",
                 actual: kind.label(),
@@ -237,7 +237,7 @@ impl<T> Object<T> {
         };
 
         let Some(initial_shared_version) = kind.shared_start_version() else {
-            return Err(sui_move_call::CallArgError::ObjectKind {
+            return Err(talus_sui_move_call::CallArgError::ObjectKind {
                 object_id: self.object_id(),
                 expected: "shared",
                 actual: kind.label(),
@@ -248,8 +248,8 @@ impl<T> Object<T> {
     }
 }
 
-impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for Object<T> {
-    fn to_call_arg(&self) -> Result<CallArg, sui_move_call::CallArgError> {
+impl<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey> ToCallArg for Object<T> {
+    fn to_call_arg(&self) -> Result<CallArg, talus_sui_move_call::CallArgError> {
         self.ensure_not_tombstoned()?;
 
         let owner = self.cell.owner.read().expect("poisoned object lock");
@@ -259,7 +259,7 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for Object<T> {
             }
             kind if kind.is_shared_like() => {
                 let Some(initial_shared_version) = kind.shared_start_version() else {
-                    return Err(sui_move_call::CallArgError::ObjectKind {
+                    return Err(talus_sui_move_call::CallArgError::ObjectKind {
                         object_id: self.object_id(),
                         expected: "shared",
                         actual: kind.label(),
@@ -272,7 +272,7 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for Object<T> {
                     Mutability::Immutable,
                 )))
             }
-            other => Err(sui_move_call::CallArgError::ObjectKind {
+            other => Err(talus_sui_move_call::CallArgError::ObjectKind {
                 object_id: self.object_id(),
                 expected: "immutable-or-owned or shared",
                 actual: other.label(),
@@ -281,8 +281,8 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for Object<T> {
     }
 }
 
-impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for Object<T> {
-    fn to_call_arg_mutable(&self) -> Result<CallArg, sui_move_call::CallArgError> {
+impl<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey> ToCallArgMut for Object<T> {
+    fn to_call_arg_mutable(&self) -> Result<CallArg, talus_sui_move_call::CallArgError> {
         self.ensure_not_tombstoned()?;
 
         let owner = self.cell.owner.read().expect("poisoned object lock");
@@ -292,7 +292,7 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for Object<T> {
             }
             kind if kind.is_shared_like() => {
                 let Some(initial_shared_version) = kind.shared_start_version() else {
-                    return Err(sui_move_call::CallArgError::ObjectKind {
+                    return Err(talus_sui_move_call::CallArgError::ObjectKind {
                         object_id: self.object_id(),
                         expected: "shared",
                         actual: kind.label(),
@@ -305,7 +305,7 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for Object<T> {
                     Mutability::Mutable,
                 )))
             }
-            other => Err(sui_move_call::CallArgError::ObjectKind {
+            other => Err(talus_sui_move_call::CallArgError::ObjectKind {
                 object_id: self.object_id(),
                 expected: "immutable-or-owned or shared",
                 actual: other.label(),
@@ -314,11 +314,11 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for Object<T> {
     }
 }
 
-impl<T: sui_move::MoveStruct + sui_move::HasKey> ObjectArg<T> for Object<T> {}
+impl<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey> ObjectArg<T> for Object<T> {}
 
-/// Runtime-owned handle for a receiving object input.
+/// Handle owned by the runtime for a receiving object input.
 ///
-/// This is the runtime-owned counterpart of Sui's `Input::Receiving`.
+/// This is the runtime counterpart of Sui's `Input::Receiving`.
 pub struct ReceivingObject<T> {
     cell: Arc<ObjectCell>,
     phantom: PhantomData<T>,
@@ -357,8 +357,8 @@ impl<T> ReceivingObject<T> {
     }
 }
 
-impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for ReceivingObject<T> {
-    fn to_call_arg(&self) -> Result<CallArg, sui_move_call::CallArgError> {
+impl<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey> ToCallArg for ReceivingObject<T> {
+    fn to_call_arg(&self) -> Result<CallArg, talus_sui_move_call::CallArgError> {
         let obj = Object::<T> {
             cell: Arc::clone(&self.cell),
             phantom: PhantomData,
@@ -369,7 +369,7 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for ReceivingObject<T
         let owner = obj.cell.owner.read().expect("poisoned object lock");
         match tx::classify_owner(&owner) {
             tx::OwnerKind::AddressOwned => Ok(CallArg::Receiving(self.reference())),
-            other => Err(sui_move_call::CallArgError::ObjectKind {
+            other => Err(talus_sui_move_call::CallArgError::ObjectKind {
                 object_id: self.object_id(),
                 expected: "address-owned",
                 actual: other.label(),
@@ -378,8 +378,8 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for ReceivingObject<T
     }
 }
 
-impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for ReceivingObject<T> {
-    fn to_call_arg_mutable(&self) -> Result<CallArg, sui_move_call::CallArgError> {
+impl<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey> ToCallArgMut for ReceivingObject<T> {
+    fn to_call_arg_mutable(&self) -> Result<CallArg, talus_sui_move_call::CallArgError> {
         self.to_call_arg()
     }
 }
@@ -391,15 +391,15 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for ReceivingObjec
 ///
 /// # Example
 /// ```
-/// use sui_move_call::{CallArg, CallSpec};
-/// use sui_move_runtime::SharedObject;
+/// use talus_sui_move_call::{CallArg, CallSpec};
+/// use talus_sui_move_runtime::SharedObject;
 /// use sui_sdk_types::Address;
 ///
-/// # #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+/// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 /// # struct UID {
 /// #     id: u64,
 /// # }
-/// # #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key, store")]
+/// # #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key, store")]
 /// # struct Demo {
 /// #     id: UID,
 /// # }
@@ -479,17 +479,17 @@ impl<T> SharedObject<T> {
     }
 }
 
-impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArg for SharedObject<T> {
-    fn to_call_arg(&self) -> Result<CallArg, sui_move_call::CallArgError> {
+impl<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey> ToCallArg for SharedObject<T> {
+    fn to_call_arg(&self) -> Result<CallArg, talus_sui_move_call::CallArgError> {
         Ok(CallArg::Shared(self.input.clone()))
     }
 }
 
-impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for SharedObject<T> {
-    fn to_call_arg_mutable(&self) -> Result<CallArg, sui_move_call::CallArgError> {
+impl<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey> ToCallArgMut for SharedObject<T> {
+    fn to_call_arg_mutable(&self) -> Result<CallArg, talus_sui_move_call::CallArgError> {
         let actual = self.mutability();
         if !actual.is_mutable() {
-            return Err(sui_move_call::CallArgError::SharedMutability {
+            return Err(talus_sui_move_call::CallArgError::SharedMutability {
                 object_id: self.object_id(),
                 actual,
             });
@@ -499,7 +499,7 @@ impl<T: sui_move::MoveStruct + sui_move::HasKey> ToCallArgMut for SharedObject<T
     }
 }
 
-impl<T: sui_move::MoveStruct + sui_move::HasKey> ObjectArg<T> for SharedObject<T> {}
+impl<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey> ObjectArg<T> for SharedObject<T> {}
 
 #[derive(Default, Debug)]
 pub(crate) struct Cursor {
@@ -551,7 +551,7 @@ impl Cursor {
         CursorSnapshot { objects }
     }
 
-    pub(crate) fn intern_object<T: sui_move::MoveStruct + sui_move::HasKey>(
+    pub(crate) fn intern_object<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey>(
         &self,
         reference: ObjectReference,
         owner: Owner,
@@ -563,7 +563,9 @@ impl Cursor {
         }
     }
 
-    pub(crate) fn intern_receiving_object<T: sui_move::MoveStruct + sui_move::HasKey>(
+    pub(crate) fn intern_receiving_object<
+        T: talus_sui_move::MoveStruct + talus_sui_move::HasKey,
+    >(
         &self,
         reference: ObjectReference,
         owner: Owner,
@@ -639,23 +641,23 @@ impl Cursor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sui_move_call::ToCallArgMut;
     use sui_sdk_types::{
         ChangedObject, Digest, ExecutionStatus, GasCostSummary, IdOperation, Mutability, ObjectIn,
         ObjectOut, Owner, TransactionEffects, TransactionEffectsV2,
     };
+    use talus_sui_move_call::ToCallArgMut;
 
-    #[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, store")]
+    #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, store")]
     struct ID {
         bytes: Address,
     }
 
-    #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+    #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
     struct UID {
         id: ID,
     }
 
-    #[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+    #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
     struct Demo {
         id: UID,
     }
@@ -713,7 +715,7 @@ mod tests {
 
         assert!(matches!(
             obj.to_call_arg().unwrap_err(),
-            sui_move_call::CallArgError::Tombstoned { .. }
+            talus_sui_move_call::CallArgError::Tombstoned { .. }
         ));
 
         cursor.intern_object::<Demo>(new, Owner::Shared(7));
@@ -838,7 +840,7 @@ mod tests {
         let err = obj.to_call_arg().unwrap_err();
 
         match err {
-            sui_move_call::CallArgError::Tombstoned { object_id, reason } => {
+            talus_sui_move_call::CallArgError::Tombstoned { object_id, reason } => {
                 assert_eq!(object_id, id);
                 assert_eq!(reason, "not-exist");
             }
@@ -857,7 +859,7 @@ mod tests {
 
         let err = obj.to_call_arg().unwrap_err();
         match err {
-            sui_move_call::CallArgError::ObjectKind {
+            talus_sui_move_call::CallArgError::ObjectKind {
                 object_id,
                 expected,
                 actual,
@@ -903,7 +905,7 @@ mod tests {
         let obj: Object<Demo> = cursor.intern_object(reference.clone(), Owner::Shared(7));
         let err = obj.receiving().unwrap_err();
         match err {
-            sui_move_call::CallArgError::ObjectKind {
+            talus_sui_move_call::CallArgError::ObjectKind {
                 object_id,
                 expected,
                 actual,

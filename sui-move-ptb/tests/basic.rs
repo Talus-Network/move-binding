@@ -1,25 +1,25 @@
 use std::str::FromStr;
 
-use sui_move_call::{
-    CallArg, CallSpec, CallTarget, MoveObject, ReceivingMoveObject, SharedMoveObject,
-};
-use sui_move_ptb::{ptb, BuildError, PtbBuilder};
 use sui_sdk_types::{
     Address, Argument, Command, Digest, FundsWithdrawal, Mutability, ObjectReference, Owner,
     TypeTag, WithdrawFrom,
 };
+use talus_sui_move_call::{
+    CallArg, CallSpec, CallTarget, MoveObject, ReceivingMoveObject, SharedMoveObject,
+};
+use talus_sui_move_ptb::{ptb, BuildError, PtbBuilder};
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, store")]
 struct ID {
     bytes: Address,
 }
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
     id: ID,
 }
 
-#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+#[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Thing {
     id: UID,
 }
@@ -82,7 +82,7 @@ fn generic_object_helpers_build_canonical_inputs() {
     let CallArg::Shared(clock) = &tx.inputs()[2] else {
         panic!("expected shared clock input")
     };
-    assert_eq!(clock.object_id(), sui_move_ptb::CLOCK_OBJECT_ID);
+    assert_eq!(clock.object_id(), talus_sui_move_ptb::CLOCK_OBJECT_ID);
     assert_eq!(clock.version(), 1);
     assert_eq!(clock.mutability(), Mutability::Immutable);
 }
@@ -308,10 +308,10 @@ fn nested_result_helper_requires_command_result() {
         Argument::NestedResult(7, 2)
     );
     assert_eq!(
-        sui_move_ptb::nested_result(result, 2).unwrap(),
+        talus_sui_move_ptb::nested_result(result, 2).unwrap(),
         Argument::NestedResult(7, 2)
     );
 
-    let err = sui_move_ptb::nested_result(Argument::Input(0), 0).unwrap_err();
+    let err = talus_sui_move_ptb::nested_result(Argument::Input(0), 0).unwrap_err();
     assert!(matches!(err, BuildError::ExpectedCommandResult { .. }));
 }

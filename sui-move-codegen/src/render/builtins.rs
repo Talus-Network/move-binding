@@ -1,8 +1,8 @@
-//! Mapping for irreducible built-in Move types.
+//! Mapping for primitive Move types that cannot be reduced further.
 //!
 //! Sui framework types such as `0x2::object::UID`, `0x2::coin::Coin`, and
-//! `0x1::option::Option` are deliberately not mapped here. They are package-defined datatypes and
-//! must be generated from package metadata like any other Move package.
+//! `0x1::option::Option` are deliberately not mapped here. They are datatypes defined by packages
+//! and must be generated from package metadata like any other Move package.
 
 use proc_macro2::TokenStream;
 

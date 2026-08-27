@@ -1,16 +1,18 @@
-# sui-move-codegen
+# talus-sui-move-codegen
 
 Generate typed Rust bindings for a Move package on Sui.
 
-This crate solves one problem: **turn on-chain Move package metadata into Rust source code** that
-fits the layered `sui-move*` stack.
+The crates.io package is `talus-sui-move-codegen`; Rust code imports it as `talus_sui_move_codegen`.
 
-- `sui-move`: Move-shaped types (`MoveType`, `MoveStruct`, abilities)
-- `sui-move-call`: `CallSpec` + typed argument traits (`ToCallArg`, `ObjectArg<T>`)
-- `sui-move-ptb`: build a Sui programmable transaction (PTB) from `CallSpec`
-- `sui-move-runtime`: cursor-driven runtime for the Read → Tx → Commit mental model + auto-updating
-  object handles
-- `sui-move-codegen` (this crate): generate the bindings (types + call builders)
+This crate solves one problem: **turn Move package metadata fetched from Sui into Rust source
+code** that fits the layered `talus-sui-move*` stack.
+
+- `talus-sui-move`: Rust representations of Move types (`MoveType`, `MoveStruct`, abilities)
+- `talus-sui-move-call`: `CallSpec` + typed argument traits (`ToCallArg`, `ObjectArg<T>`)
+- `talus-sui-move-ptb`: build a Sui programmable transaction (PTB) from `CallSpec`
+- `talus-sui-move-runtime`: runtime with a cursor for the Read → Tx → Commit mental model and object
+  handles that update after commits
+- `talus-sui-move-codegen` (this crate): generate the bindings (types + call builders)
 
 ## Problem
 
@@ -29,23 +31,23 @@ metadata.
 
 The pipeline is intentionally split in two:
 
-1. **Source (network)**: fetch package metadata once and normalize it into a serde-friendly IR
-   (`NormalizedPackage`).
+1. **Source (network)**: fetch package metadata once and normalize it into an IR that supports
+   Serde (`NormalizedPackage`).
 2. **Render (offline)**: render Rust source from that IR.
 
-Because the IR is JSON-serializable, you can commit it and re-render deterministically in CI without
-needing network access.
+Because the IR is serializable as JSON, you can commit it and render again deterministically in CI
+without needing network access.
 
 ### Optional source parameter names
 
-Sui package metadata contains function parameter types but not their source names. Network fetched
-IR therefore uses deterministic names such as `arg0` and `arg1` by default.
+Sui package metadata contains function parameter types but not their source names. IR built from
+network data therefore uses deterministic names such as `arg0` and `arg1` by default.
 
 Callers that own matching Move source can overlay parameter names before saving or rendering the
 IR:
 
 ```rust,no_run
-use sui_move_codegen::{apply_function_parameter_names_from_sources, fetch_package, GrpcClient};
+use talus_sui_move_codegen::{apply_function_parameter_names_from_sources, fetch_package, GrpcClient};
 use sui_sdk_types::Address;
 
 # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
@@ -59,7 +61,7 @@ apply_function_parameter_names_from_sources(&mut package, "path/to/package/sourc
 ```
 
 The overlay changes names only. Package identity, function signatures, types, and abilities remain
-network derived. The source is trusted metadata and is not verified against published bytecode.
+derived from network data. The source is trusted metadata and is not verified against published bytecode.
 Source and network parameter counts must match. Rust rendering preserves source spelling in Move
 documentation and converts reserved Rust identifiers safely in generated APIs.
 
@@ -71,16 +73,16 @@ Given a `NormalizedPackage` (either fetched from gRPC or loaded from JSON), this
 - `call_package()` / `type_package()` / `with_packages(...)` helpers for scoped package address overrides
 - `type_package_for(...)` / `with_package_context(...)` helpers for exact datatype origins
 - One Rust module per Move module (or a flat layout via `RenderOptions::flatten`)
-- Move datatypes as Rust types (structs use `#[sui_move::move_struct]` via `sui-move`’s `derive`
+- Move datatypes as Rust types (structs use `#[talus_sui_move::move_struct]` via `talus-sui-move`’s `derive`
   feature)
 - Move functions as generated `*_target` functions
-- Optional typed Rust functions that return `sui_move_call::CallSpec`
-- (optional) A `TxExt` trait implemented for `sui_move_runtime::Tx` (enable with
+- Optional typed Rust functions that return `talus_sui_move_call::CallSpec`
+- (optional) A `TxExt` trait implemented for `talus_sui_move_runtime::Tx` (enable with
   `RenderOptions::emit_tx_ext`)
 
 Those generated call builders are designed to be used directly in higher layers:
-- `sui-move-ptb` can consume `CallSpec` to build a `ProgrammableTransaction`
-- `sui-move-runtime` can consume `CallSpec` via its tx builder (or `sui_move_runtime::tx!`)
+- `talus-sui-move-ptb` can consume `CallSpec` to build a `ProgrammableTransaction`
+- `talus-sui-move-runtime` can consume `CallSpec` via its tx builder (or `talus_sui_move_runtime::tx!`)
 
 Use `with_packages` when generated calls target one deployment package while type tags retain the
 package that defines the Move types:
@@ -191,12 +193,12 @@ assert_eq!(agent_type_package, initial_package);
 assert_eq!(state_v2_type_package, upgraded_package);
 ```
 
-## Example: render from an in-memory IR
+## Example: render from an IR in memory
 
 ```rust
 use std::collections::BTreeMap;
-use sui_move_codegen::ir::*;
-use sui_move_codegen::render::{render_package, RenderOptions};
+use talus_sui_move_codegen::ir::*;
+use talus_sui_move_codegen::render::{render_package, RenderOptions};
 
 let pkg = NormalizedPackage {
     storage_id: "0x1".into(),
@@ -258,8 +260,8 @@ generated Rust API:
 
 ```rust
 use std::collections::BTreeMap;
-use sui_move_codegen::ir::*;
-use sui_move_codegen::render::{render_package, RenderOptions};
+use talus_sui_move_codegen::ir::*;
+use talus_sui_move_codegen::render::{render_package, RenderOptions};
 
 let pkg = NormalizedPackage {
     storage_id: "0x1".into(),
@@ -335,16 +337,16 @@ assert!(code.contains("push_arg_mut(arg0)"));
 
 ## Optional: runtime `Tx` extension trait
 
-If you want a slightly more ergonomic “append a call” API on top of `sui-move-runtime`, you can
-ask codegen to emit a `TxExt` trait implemented for `sui_move_runtime::Tx`.
+If you want a slightly more ergonomic “append a call” API on top of `talus-sui-move-runtime`, you can
+ask codegen to emit a `TxExt` trait implemented for `talus_sui_move_runtime::Tx`.
 
 The generated methods do **not** submit the transaction; they only call `Tx::call(...)`. This
 keeps the Read → Tx → Commit boundary explicit.
 
 ```rust
 use std::collections::BTreeMap;
-use sui_move_codegen::ir::*;
-use sui_move_codegen::render::{render_package, RenderOptions};
+use talus_sui_move_codegen::ir::*;
+use talus_sui_move_codegen::render::{render_package, RenderOptions};
 
 let pkg = NormalizedPackage {
     storage_id: "0x1".into(),
@@ -415,13 +417,13 @@ assert!(code.contains("fn m__mutate"));
 
 ## Example: generic type params and ability bounds
 
-Move generic constraints become Rust `where` bounds using `sui-move`’s marker traits. For example,
+Move generic constraints become Rust `where` bounds using `talus-sui-move`’s marker traits. For example,
 `T: store` becomes `T0: MoveType + HasStore`.
 
 ```rust
 use std::collections::BTreeMap;
-use sui_move_codegen::ir::*;
-use sui_move_codegen::render::{render_package, RenderOptions};
+use talus_sui_move_codegen::ir::*;
+use talus_sui_move_codegen::render::{render_package, RenderOptions};
 
 let pkg = NormalizedPackage {
     storage_id: "0x1".into(),
@@ -464,7 +466,7 @@ assert!(code.contains("target.push_type_arg::<T0>();"));
 ## Example: fetch over gRPC
 
 ```rust,no_run
-use sui_move_codegen::{fetch_package, GrpcClient};
+use talus_sui_move_codegen::{fetch_package, GrpcClient};
 use sui_sdk_types::Address;
 
 # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
@@ -482,21 +484,21 @@ println!("{} bytes", json.len());
 
 To keep builds deterministic, fetch metadata once and commit it as JSON, then render from JSON:
 
-1. Fetch and save `NormalizedPackage` JSON (out-of-band; not in `build.rs`)
-2. Render Rust bindings from that JSON during builds or as a pre-generation step
+1. Fetch and save `NormalizedPackage` JSON (separate; not in `build.rs`)
+2. Render Rust bindings from that JSON during builds or before generation
 
 This avoids putting network access in CI/build scripts.
 
-## Cross-package type resolution
+## Type resolution across packages
 
 The renderer only treats primitive Move types and datatypes from the package being rendered as
 intrinsic. Framework and dependency types are still ordinary package declarations, so register their
 generated Rust bindings explicitly:
 
 ```rust,no_run
-use sui_move_codegen::fetch_package;
-use sui_move_codegen::render::{render_package, RenderOptions};
-use sui_move_codegen::GrpcClient;
+use talus_sui_move_codegen::fetch_package;
+use talus_sui_move_codegen::render::{render_package, RenderOptions};
+use talus_sui_move_codegen::GrpcClient;
 use sui_sdk_types::Address;
 
 # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
@@ -514,7 +516,7 @@ let code = render_package(&app, &opts);
 
 Without an external binding, an external datatype renders as a `compile_error!`. That keeps missing
 dependency bindings explicit instead of silently reintroducing handwritten framework mirrors into
-`sui-move`.
+`talus-sui-move`.
 
 ## Using the generated code
 
@@ -523,13 +525,14 @@ expects these crates in the consumer’s `Cargo.toml`:
 
 ```toml
 [dependencies]
-sui-move = { path = "../sui-move" }
-sui-move-derive = { path = "../sui-move-derive" }
-sui-move-call = { path = "../sui-move-call" }
+talus-sui-move = "=0.2.0-rc.1"
+talus-sui-move-derive = "=0.2.0-rc.1"
+talus-sui-move-call = "=0.2.0-rc.1"
 ```
 
-If you want to execute calls, add higher layers (`sui-move-ptb`, `sui-move-runtime`) in the same
-consumer crate.
+If you want to execute calls, add higher layers (`talus-sui-move-ptb`,
+`talus-sui-move-runtime`) in the same consumer crate.
 
-`RenderOptions::use_aliases` only affects verbosity in the emitted source (it adds `use sui_move as
-sm; use sui_move_call as sm_call;`). It does not change which crates are required.
+`RenderOptions::use_aliases` only affects verbosity in the emitted source (it adds
+`use talus_sui_move as sm; use talus_sui_move_call as sm_call;`). It does not change which crates
+are required.

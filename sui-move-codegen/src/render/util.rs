@@ -150,7 +150,7 @@ fn package_const_tokens(pkg: &NormalizedPackage, opts: &RenderOptions) -> TokenS
         .as_deref()
         .unwrap_or(pkg.storage_id.as_str());
     let _ = opts;
-    let address_ty = quote! { sui_move::prelude::Address };
+    let address_ty = quote! { talus_sui_move::prelude::Address };
     quote! {
         /// Package address used as the target for generated Move calls.
         pub const CALL_PACKAGE: #address_ty = #address_ty::from_static(#call_addr);
@@ -162,7 +162,7 @@ fn package_const_tokens(pkg: &NormalizedPackage, opts: &RenderOptions) -> TokenS
 
 fn package_scope_tokens(opts: &RenderOptions) -> TokenStream {
     let _ = opts;
-    let address_ty = quote! { sui_move::prelude::Address };
+    let address_ty = quote! { talus_sui_move::prelude::Address };
     quote! {
         /// Exact datatype origins grouped by module and datatype name.
         pub type TypeOrigins = std::collections::BTreeMap<
@@ -316,9 +316,9 @@ fn aliases(opts: &RenderOptions) -> TokenStream {
     }
     quote! {
         #[allow(unused_imports)]
-        use sui_move as sm;
+        use talus_sui_move as sm;
         #[allow(unused_imports)]
-        use sui_move_call as sm_call;
+        use talus_sui_move_call as sm_call;
     }
 }
 

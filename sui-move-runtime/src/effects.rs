@@ -5,7 +5,7 @@ use sui_sdk_types::{
     TransactionEffects,
 };
 
-/// Reason an object is considered not-live in the local cursor.
+/// Reason an object is considered not live in the local cursor.
 ///
 /// This is derived from transaction effects (e.g. `deleted`, `wrapped`) and is used to make stale
 /// handles fail early when converted into transaction inputs.

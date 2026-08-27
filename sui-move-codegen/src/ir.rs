@@ -1,4 +1,4 @@
-//! A small, serde-friendly IR for Move package metadata.
+//! A small IR for Move package metadata that is compatible with Serde.
 //!
 //! This module intentionally models only what code generation needs:
 //! - Move datatypes (structs/enums) with field layouts and abilities
@@ -22,7 +22,7 @@ pub enum Ability {
     Key,
 }
 
-/// A fully-qualified type name: `<addr>::<module>::<name>`.
+/// A fully qualified type name: `<addr>::<module>::<name>`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TypeName {
     /// `0x...` address.
@@ -36,7 +36,7 @@ pub struct TypeName {
 }
 
 impl TypeName {
-    /// Parse a fully-qualified type name like `0x2::object::UID`.
+    /// Parse a fully qualified type name like `0x2::object::UID`.
     ///
     /// This normalizes the address portion to the same canonical `0x...` representation used by
     /// the rest of the IR.
@@ -112,7 +112,7 @@ pub enum TypeRef {
     },
     /// `0x...::module::Name<T0, ...>`
     Datatype {
-        /// Fully-qualified name.
+        /// Fully qualified name.
         type_name: TypeName,
         /// Type arguments.
         type_arguments: Vec<TypeRef>,
@@ -271,7 +271,7 @@ pub struct Variant {
 /// A Move datatype definition.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Datatype {
-    /// Fully-qualified type name.
+    /// Fully qualified type name.
     pub type_name: TypeName,
     /// Move module name (redundant but convenient).
     pub module: String,
@@ -300,7 +300,7 @@ pub struct NormalizedModule {
 /// A Move package.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NormalizedPackage {
-    /// Storage id of this package version (on-chain object id).
+    /// Storage id of this package version (on chain object id).
     ///
     /// This is the concrete package object id for a specific published version.
     pub storage_id: String,
@@ -315,7 +315,7 @@ pub struct NormalizedPackage {
     pub modules: BTreeMap<String, NormalizedModule>,
 }
 
-/// Function parameter-name overlay failed because source and IR arities differ.
+/// Function parameter name recovery failed because source and IR arities differ.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FunctionParameterNameMismatch {
     /// Move module name.

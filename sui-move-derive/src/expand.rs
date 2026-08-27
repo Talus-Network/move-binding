@@ -1,12 +1,12 @@
 //! Code generation for `#[move_struct]`.
 //!
-//! The high-level expansion steps are:
-//! 1. Validate input shape (named-field structs only).
+//! Expansion has four steps:
+//! 1. Validate input shape (named field structs only).
 //! 2. Inject `PhantomData` fields for phantom type parameters.
-//! 3. Compute ability flags and generate appropriate `where`-bounds.
+//! 3. Compute ability flags and generate appropriate constraints in `where` clauses.
 //! 4. Generate `MoveType`/`MoveStruct` impls and ability marker impls.
 //!
-//! The generated code references `::sui_move` (and its `__private` re-exports) so that downstream
+//! The generated code references `::talus_sui_move` and its `__private` exports so that downstream
 //! crates don't need direct dependencies on `serde` or `sui-sdk-types`.
 
 use std::collections::BTreeMap;
@@ -143,20 +143,20 @@ pub(crate) fn expand_move_struct(
     let mut type_param_bounds: Vec<WherePredicate> = Vec::new();
     for param in &type_param_idents {
         let ident = &param.ident;
-        let mut bounds: Vec<syn::TypeParamBound> = vec![parse_quote!(::sui_move::MoveType)];
+        let mut bounds: Vec<syn::TypeParamBound> = vec![parse_quote!(::talus_sui_move::MoveType)];
 
         if let Some(abilities) = type_ability_flags.get(&ident.to_string()) {
             if abilities.copy {
-                bounds.push(parse_quote!(::sui_move::HasCopy));
+                bounds.push(parse_quote!(::talus_sui_move::HasCopy));
             }
             if abilities.drop {
-                bounds.push(parse_quote!(::sui_move::HasDrop));
+                bounds.push(parse_quote!(::talus_sui_move::HasDrop));
             }
             if abilities.store {
-                bounds.push(parse_quote!(::sui_move::HasStore));
+                bounds.push(parse_quote!(::talus_sui_move::HasStore));
             }
             if abilities.key {
-                bounds.push(parse_quote!(::sui_move::HasKey));
+                bounds.push(parse_quote!(::talus_sui_move::HasKey));
             }
         }
 
@@ -185,13 +185,13 @@ pub(crate) fn expand_move_struct(
         }
         let ty = &field.ty;
         if has_copy {
-            copy_bounds.push(parse_quote!(#ty: ::sui_move::HasCopy));
+            copy_bounds.push(parse_quote!(#ty: ::talus_sui_move::HasCopy));
         }
         if has_drop {
-            drop_bounds.push(parse_quote!(#ty: ::sui_move::HasDrop));
+            drop_bounds.push(parse_quote!(#ty: ::talus_sui_move::HasDrop));
         }
         if has_store {
-            store_bounds.push(parse_quote!(#ty: ::sui_move::HasStore));
+            store_bounds.push(parse_quote!(#ty: ::talus_sui_move::HasStore));
         }
     }
 
@@ -207,21 +207,21 @@ pub(crate) fn expand_move_struct(
         .iter()
         .map(|p| {
             let ident = &p.ident;
-            quote! { <#ident as ::sui_move::MoveType>::type_tag_static() }
+            quote! { <#ident as ::talus_sui_move::MoveType>::type_tag_static() }
         })
         .collect::<Vec<_>>();
 
     let address_expr = if let Some(address_fn) = &args.address_fn {
         quote! { #address_fn() }
     } else {
-        quote! { ::sui_move::parse_address(#address).expect("invalid address literal") }
+        quote! { ::talus_sui_move::parse_address(#address).expect("invalid address literal") }
     };
 
     let struct_tag_builder = quote! {
-        ::sui_move::__private::sui_sdk_types::StructTag::new(
+        ::talus_sui_move::__private::sui_sdk_types::StructTag::new(
             #address_expr,
-            ::sui_move::parse_identifier(#module_name).expect("invalid module"),
-            ::sui_move::parse_identifier(#struct_name).expect("invalid struct name"),
+            ::talus_sui_move::parse_identifier(#module_name).expect("invalid module"),
+            ::talus_sui_move::parse_identifier(#struct_name).expect("invalid struct name"),
             vec![#(#ty_params_for_tag),*],
         )
     };
@@ -231,8 +231,8 @@ pub(crate) fn expand_move_struct(
         parse_quote!(::core::cmp::PartialEq),
         parse_quote!(::core::cmp::Eq),
         parse_quote!(::core::hash::Hash),
-        parse_quote!(::sui_move::__private::serde::Serialize),
-        parse_quote!(::sui_move::__private::serde::Deserialize),
+        parse_quote!(::talus_sui_move::__private::serde::Serialize),
+        parse_quote!(::talus_sui_move::__private::serde::Deserialize),
     ];
 
     let mut output_struct = input;
@@ -292,7 +292,7 @@ pub(crate) fn expand_move_struct(
     if !serde_has_crate_override {
         output_struct
             .attrs
-            .push(parse_quote!(#[serde(crate = "sui_move::__private::serde")]));
+            .push(parse_quote!(#[serde(crate = "talus_sui_move::__private::serde")]));
     }
     output_struct.attrs.extend(serde_attrs);
 
@@ -320,22 +320,22 @@ pub(crate) fn expand_move_struct(
         let mut impls = Vec::new();
         if has_key {
             impls.push(quote! {
-                impl #impl_generics ::sui_move::HasKey for #struct_ident #ty_generics #key_where_clause {}
+                impl #impl_generics ::talus_sui_move::HasKey for #struct_ident #ty_generics #key_where_clause {}
             });
         }
         if has_store {
             impls.push(quote! {
-                impl #impl_generics ::sui_move::HasStore for #struct_ident #ty_generics #store_where_clause {}
+                impl #impl_generics ::talus_sui_move::HasStore for #struct_ident #ty_generics #store_where_clause {}
             });
         }
         if has_copy {
             impls.push(quote! {
-                impl #impl_generics ::sui_move::HasCopy for #struct_ident #ty_generics #copy_where_clause {}
+                impl #impl_generics ::talus_sui_move::HasCopy for #struct_ident #ty_generics #copy_where_clause {}
             });
         }
         if has_drop {
             impls.push(quote! {
-                impl #impl_generics ::sui_move::HasDrop for #struct_ident #ty_generics #drop_where_clause {}
+                impl #impl_generics ::talus_sui_move::HasDrop for #struct_ident #ty_generics #drop_where_clause {}
             });
         }
         quote! { #(#impls)* }
@@ -360,16 +360,16 @@ pub(crate) fn expand_move_struct(
             }
         }
 
-        impl #impl_generics ::sui_move::MoveType for #struct_ident #ty_generics #move_type_where_clause {
-            fn type_tag_static() -> ::sui_move::__private::sui_sdk_types::TypeTag {
-                ::sui_move::__private::sui_sdk_types::TypeTag::Struct(Box::new(
-                    <Self as ::sui_move::MoveStruct>::struct_tag_static(),
+        impl #impl_generics ::talus_sui_move::MoveType for #struct_ident #ty_generics #move_type_where_clause {
+            fn type_tag_static() -> ::talus_sui_move::__private::sui_sdk_types::TypeTag {
+                ::talus_sui_move::__private::sui_sdk_types::TypeTag::Struct(Box::new(
+                    <Self as ::talus_sui_move::MoveStruct>::struct_tag_static(),
                 ))
             }
         }
 
-        impl #impl_generics ::sui_move::MoveStruct for #struct_ident #ty_generics #move_type_where_clause {
-            fn struct_tag_static() -> ::sui_move::__private::sui_sdk_types::StructTag {
+        impl #impl_generics ::talus_sui_move::MoveStruct for #struct_ident #ty_generics #move_type_where_clause {
+            fn struct_tag_static() -> ::talus_sui_move::__private::sui_sdk_types::StructTag {
                 #struct_tag_builder
             }
         }

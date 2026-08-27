@@ -1,31 +1,35 @@
-# sui-move-call
+# talus-sui-move-call
 
 Typed building blocks for describing Move calls on Sui.
 
-This crate builds on top of [`sui-move`](../sui-move/README.md) and solves one problem:
+The crates.io package is `talus-sui-move-call`; Rust code imports it as `talus_sui_move_call`.
+
+This crate builds on top of [`talus-sui-move`](https://docs.rs/talus-sui-move) and solves one problem:
 **describe a Move call in a typed way** (object handles + type arguments + arguments) without
 building or executing transactions.
 
 ## Where it fits
 
-`sui-move-call` is the “Call” layer in the repository’s Read → Tx → Commit mental model (`MODEL.md`):
+`talus-sui-move-call` is the “Call” layer in the repository’s
+[Read → Tx → Commit model](https://github.com/Talus-Network/move-binding/blob/main/MODEL.md):
 
-- **Read** (runtime) fetches objects and classifies on-chain ownership.
+- **Read** (runtime) fetches objects and classifies ownership from chain state.
 - **Call** (this crate) describes *what* to call and how to encode arguments.
 - **PTB** builds a `ProgrammableTransaction` from a `CallSpec`.
 - **Commit** (runtime) submits and applies effects to advance the cursor.
 
-This crate sits directly above `sui-move`: it uses `MoveType`/`MoveStruct` to build type-checked
-call descriptions (`CallSpec`). Transaction-building and execution are intentionally out of scope.
+This crate sits directly above `talus-sui-move`: it uses `MoveType` and `MoveStruct` to build call
+descriptions (`CallSpec`) whose types are checked by Rust. Transaction building and execution are
+intentionally out of scope.
 
 ## Core types
 
 - `CallSpec`: `(package, module, function)` + type arguments + call arguments
-- `CallArg`: canonical call-argument representation (re-export of `sui_sdk_types::Input`)
+- `CallArg`: canonical call argument representation (a public alias for `sui_sdk_types::Input`)
 - `ToCallArg`: convert values into `CallArg` without consuming them
 - `ToCallArgMut`: convert values into `CallArg` for Move `&mut` parameters (shared inputs become
   mutable)
-- `ObjectArg<T>`: typed object-argument trait used by generated interfaces (accepts any object
+- `ObjectArg<T>`: typed object argument trait used by generated interfaces (accepts any object
   handle that can be encoded as both `&` and `&mut` in Move)
 - `MoveObject<T>`: typed handle for `Input::ImmutableOrOwned(ObjectReference)`
 - `SharedMoveObject<T>`: typed handle for `Input::Shared(SharedInput)`
@@ -37,15 +41,16 @@ refuse to convert tombstoned handles or invalid owner kinds into object inputs).
 ## Receiving is an input mode (not ownership)
 
 Sui's “receiving” is a distinct **transaction input mode**. It corresponds to the Move framework
-type `sui::transfer::Receiving<T>`: an ephemeral per-transaction “receiving ticket” consumed by
+type `sui::transfer::Receiving<T>`: an ephemeral “receiving ticket” consumed by
 `sui::transfer::receive`/`public_receive`.
 
-It is not an on-chain owner kind, and this crate does not attempt to prove that a given reference
-is valid to receive. It only models the correct wire shape (`Input::Receiving(ObjectReference)`).
+It is not an owner kind recorded on chain, and this crate does not attempt to prove that a given
+reference is valid to receive. It only models the correct wire shape
+(`Input::Receiving(ObjectReference)`).
 
 ## Argument mapping
 
-This crate keeps the user-facing API small, and maps typed values into Sui's on-chain input kinds:
+This crate keeps its public API small and maps typed values into Sui transaction input kinds:
 
 - `T: MoveType` → `CallArg::Pure(bcs(T))`
 - `MoveObject<T>` → `CallArg::ImmutableOrOwned(..)`
@@ -56,7 +61,7 @@ For Move `&mut` parameters, use `CallSpec::push_arg_mut` (or implement `ToCallAr
 handle type). This matters for shared objects: Sui's shared input encodes mutability in the
 transaction input itself.
 
-These are intentionally separate wrapper types because the on-chain input shapes differ:
+These are intentionally separate wrapper types because their transaction input shapes differ:
 shared objects are described by `(id, initial_shared_version, mutability)`, while
 immutable/owned and receiving inputs use full `ObjectReference`s.
 
@@ -69,16 +74,16 @@ The typical pattern is to write small interface functions that produce a `CallSp
 
 ```rust
 use std::str::FromStr;
-use sui_move::prelude::*;
-use sui_move_call::{CallSpec, MoveObject};
+use talus_sui_move::prelude::*;
+use talus_sui_move_call::{CallSpec, MoveObject};
 use sui_sdk_types::{Address, Digest, ObjectReference, TypeTag};
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 pub struct UID {
     pub id: u64,
 }
 
-#[sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
+#[talus_sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
 pub struct Vault {
     pub id: UID,
 }
@@ -114,15 +119,15 @@ fn main() {
 
 ```rust
 use std::str::FromStr;
-use sui_move_call::{CallArg, CallSpec, ReceivingMoveObject, SharedMoveObject};
+use talus_sui_move_call::{CallArg, CallSpec, ReceivingMoveObject, SharedMoveObject};
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
     id: u64,
 }
 
-#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+#[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Thing {
     id: UID,
 }
@@ -141,7 +146,7 @@ assert!(matches!(spec.arguments[0], CallArg::Shared(_)));
 assert!(matches!(spec.arguments[1], CallArg::Receiving(_)));
 ```
 
-## Non-goals
+## Out of scope
 
 - No transaction building: this crate does not produce `ProgrammableTransaction`.
 - No execution/runtime: this crate does not talk to a network client or submit transactions.

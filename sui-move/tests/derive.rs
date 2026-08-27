@@ -2,39 +2,39 @@
 
 use std::str::FromStr;
 
-use sui_move::prelude::*;
-use sui_move::{Copyable, MoveInstance, Storable};
+use talus_sui_move::prelude::*;
+use talus_sui_move::{Copyable, MoveInstance, Storable};
 
 mod object {
-    #[sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, store")]
+    #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, store")]
     pub struct ID {
-        pub bytes: sui_move::prelude::Address,
+        pub bytes: talus_sui_move::prelude::Address,
     }
 
-    #[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+    #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
     pub struct UID {
         pub id: ID,
     }
 }
 
-#[sui_move::move_module(address = "0x1", name = "vault")]
+#[talus_sui_move::move_module(address = "0x1", name = "vault")]
 mod vault {
-    #[sui_move::move_struct(
+    #[talus_sui_move::move_struct(
         address = "0x1",
         module = "vault",
         abilities = "key, store",
         phantoms = "T",
         uid_type = "crate::object::UID"
     )]
-    pub struct Vault<T: sui_move::HasCopy + sui_move::HasStore> {
+    pub struct Vault<T: talus_sui_move::HasCopy + talus_sui_move::HasStore> {
         pub id: crate::object::UID,
         pub balance: Vec<T>,
     }
 }
 
-#[sui_move::move_module(address = "0x1", name = "wrapper")]
+#[talus_sui_move::move_module(address = "0x1", name = "wrapper")]
 mod wrapper {
-    #[sui_move::move_struct(
+    #[talus_sui_move::move_struct(
         address = "0x1",
         module = "wrapper",
         abilities = "key, store",
@@ -46,9 +46,9 @@ mod wrapper {
     }
 }
 
-#[sui_move::move_module(address = "0x1", name = "bounded")]
+#[talus_sui_move::move_module(address = "0x1", name = "bounded")]
 mod bounded {
-    #[sui_move::move_struct(
+    #[talus_sui_move::move_struct(
         address = "0x1",
         module = "bounded",
         abilities = "copy, store, drop",
@@ -60,7 +60,7 @@ mod bounded {
 }
 
 mod phantom_copy {
-    #[sui_move::move_struct(
+    #[talus_sui_move::move_struct(
         address = "0x1",
         module = "phantom_copy",
         abilities = "copy, drop, store",
@@ -72,12 +72,16 @@ mod phantom_copy {
 }
 
 mod conditional_abilities {
-    #[sui_move::move_struct(address = "0x1", module = "conditional_abilities", abilities = "store")]
+    #[talus_sui_move::move_struct(
+        address = "0x1",
+        module = "conditional_abilities",
+        abilities = "store"
+    )]
     pub struct StoreOnly {
         pub value: u64,
     }
 
-    #[sui_move::move_struct(
+    #[talus_sui_move::move_struct(
         address = "0x1",
         module = "conditional_abilities",
         abilities = "copy, drop, store"
@@ -90,13 +94,13 @@ mod conditional_abilities {
 mod dynamic_address {
     use std::str::FromStr;
 
-    use sui_move::prelude::Address;
+    use talus_sui_move::prelude::Address;
 
     pub fn package() -> Address {
         Address::from_str("0x9").unwrap()
     }
 
-    #[sui_move::move_struct(
+    #[talus_sui_move::move_struct(
         address = "0x1",
         address_fn = "crate::dynamic_address::package",
         module = "dynamic_address",
@@ -192,7 +196,10 @@ fn tag_verification_and_bcs_roundtrip() {
     assert_eq!(inst.value.balance, vec![1, 2, 3]);
 
     let err = MoveInstance::<vault::Vault<u64>>::from_raw_type(TypeTag::U8, &bytes).unwrap_err();
-    assert!(matches!(err, sui_move::DecodeError::TypeTagMismatch { .. }));
+    assert!(matches!(
+        err,
+        talus_sui_move::DecodeError::TypeTagMismatch { .. }
+    ));
 }
 
 fn require_store<T: Storable>(_: &T) {}
@@ -202,8 +209,8 @@ fn require_copy<T: Copyable>(_: &T) {}
     Debug,
     PartialEq,
     Eq,
-    sui_move::__private::serde::Serialize,
-    sui_move::__private::serde::Deserialize,
+    talus_sui_move::__private::serde::Serialize,
+    talus_sui_move::__private::serde::Deserialize,
 )]
 struct NonCloneType;
 

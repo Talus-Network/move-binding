@@ -350,7 +350,7 @@ module nexus_workflow::execution_settlement;
     #[test]
     fn applies_source_parameter_names_to_package() {
         let temp = std::env::temp_dir().join(format!(
-            "sui-move-codegen-source-names-{}",
+            "talus-sui-move-codegen-source-names-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("clock after epoch")

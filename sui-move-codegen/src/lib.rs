@@ -1,12 +1,12 @@
 #![doc = include_str!("../README.md")]
 #![deny(missing_docs)]
 
-//! See `README.md` for the crate-level overview.
+//! See `README.md` for the crate level overview.
 
 mod source;
 mod source_names;
 
-/// Normalized, serde-friendly package IR.
+/// Normalized package IR compatible with Serde.
 pub mod ir;
 
 /// Render normalized metadata into Rust source.
@@ -32,7 +32,7 @@ pub enum Error {
     #[error("package missing from response")]
     MissingPackage,
 
-    /// A fully-qualified Move type name could not be parsed.
+    /// A fully qualified Move type name could not be parsed.
     #[error("invalid type name: {0}")]
     InvalidTypeName(String),
 
@@ -52,7 +52,7 @@ pub enum Error {
     #[error("unknown reference kind: {0}")]
     UnknownReference(i32),
 
-    /// Unknown datatype-kind enum value.
+    /// Unknown datatype kind enum value.
     #[error("unknown datatype kind: {0}")]
     UnknownDatatypeKind(i32),
 }

@@ -1,6 +1,6 @@
 //! Datatype rendering (`struct`/`enum`) for generated bindings.
 //!
-//! Structs are emitted using `#[sui_move::move_struct]` so the generated code automatically
+//! Structs are emitted using `#[talus_sui_move::move_struct]` so the generated code automatically
 //! gets `MoveType` / `MoveStruct` implementations plus ability marker traits.
 //!
 //! Enums are emitted as Rust `enum`s with manual `MoveType` / `MoveStruct` impls. (Move enum
@@ -41,7 +41,7 @@ fn render_datatype_address_function(dt: &Datatype) -> TokenStream {
     quote! {
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        fn #function() -> sui_move::prelude::Address {
+        fn #function() -> talus_sui_move::prelude::Address {
             type_package_for(#module, #datatype)
         }
     }
@@ -131,7 +131,7 @@ fn render_struct(
     let macro_path = if opts.use_aliases {
         quote! { sm::move_struct }
     } else {
-        quote! { sui_move::move_struct }
+        quote! { talus_sui_move::move_struct }
     };
     let rust_copy_derive = is_rust_copy_datatype(dt, pkg).then(|| {
         quote! {
@@ -178,7 +178,7 @@ fn render_enum(
     let sm = if opts.use_aliases {
         quote! { sm }
     } else {
-        quote! { sui_move }
+        quote! { talus_sui_move }
     };
     let struct_tag_builder = struct_tag_builder_tokens(dt, opts.use_aliases);
     let where_clause = where_clause(&bounds);
@@ -258,7 +258,7 @@ fn ability_impls_for_datatype(
     let sm = if opts.use_aliases {
         quote! { sm }
     } else {
-        quote! { sui_move }
+        quote! { talus_sui_move }
     };
 
     let (impl_generics, _) = impl_and_type_generics(type_params);
@@ -805,22 +805,22 @@ fn render_object_id_helpers(dt: &Datatype) -> TokenStream {
     let type_ident = idents::ident(&dt.name);
     quote! {
         impl #type_ident {
-            pub fn new(bytes: sui_move::prelude::Address) -> Self {
+            pub fn new(bytes: talus_sui_move::prelude::Address) -> Self {
                 Self { bytes }
             }
 
-            pub fn address(&self) -> sui_move::prelude::Address {
+            pub fn address(&self) -> talus_sui_move::prelude::Address {
                 self.bytes
             }
         }
 
-        impl From<sui_move::prelude::Address> for #type_ident {
-            fn from(value: sui_move::prelude::Address) -> Self {
+        impl From<talus_sui_move::prelude::Address> for #type_ident {
+            fn from(value: talus_sui_move::prelude::Address) -> Self {
                 Self::new(value)
             }
         }
 
-        impl From<#type_ident> for sui_move::prelude::Address {
+        impl From<#type_ident> for talus_sui_move::prelude::Address {
             fn from(value: #type_ident) -> Self {
                 value.bytes
             }
@@ -838,24 +838,24 @@ fn render_object_uid_helpers(dt: &Datatype) -> TokenStream {
     let type_ident = idents::ident(&dt.name);
     quote! {
         impl #type_ident {
-            pub fn new(bytes: sui_move::prelude::Address) -> Self {
+            pub fn new(bytes: talus_sui_move::prelude::Address) -> Self {
                 Self {
                     id: ID::new(bytes),
                 }
             }
 
-            pub fn address(&self) -> sui_move::prelude::Address {
+            pub fn address(&self) -> talus_sui_move::prelude::Address {
                 self.id.bytes
             }
         }
 
-        impl From<sui_move::prelude::Address> for #type_ident {
-            fn from(value: sui_move::prelude::Address) -> Self {
+        impl From<talus_sui_move::prelude::Address> for #type_ident {
+            fn from(value: talus_sui_move::prelude::Address) -> Self {
                 Self::new(value)
             }
         }
 
-        impl From<#type_ident> for sui_move::prelude::Address {
+        impl From<#type_ident> for talus_sui_move::prelude::Address {
             fn from(value: #type_ident) -> Self {
                 value.id.bytes
             }
@@ -875,11 +875,11 @@ fn render_table_like_helpers(
     quote! {
         impl #impl_generics #type_ident #type_generics
         {
-            pub fn new(id: sui_move::prelude::Address, size: u64) -> Self {
+            pub fn new(id: talus_sui_move::prelude::Address, size: u64) -> Self {
                 #constructor
             }
 
-            pub fn id(&self) -> sui_move::prelude::Address {
+            pub fn id(&self) -> talus_sui_move::prelude::Address {
                 self.id.id.bytes
             }
 
@@ -902,7 +902,7 @@ fn render_id_size_helpers(dt: &Datatype, _opts: &RenderOptions) -> TokenStream {
     quote! {
         impl #impl_generics #type_ident #type_generics
         {
-            pub fn id(&self) -> sui_move::prelude::Address {
+            pub fn id(&self) -> talus_sui_move::prelude::Address {
                 self.id.id.bytes
             }
 
@@ -925,14 +925,14 @@ fn render_table_vec_helpers(dt: &Datatype, _opts: &RenderOptions) -> TokenStream
     quote! {
         impl #impl_generics #type_ident #type_generics
         {
-            pub fn new(id: sui_move::prelude::Address, size: u64) -> Self {
+            pub fn new(id: talus_sui_move::prelude::Address, size: u64) -> Self {
                 Self {
                     contents: super::table::Table::new(id, size),
                     phantom_t0: std::marker::PhantomData,
                 }
             }
 
-            pub fn id(&self) -> sui_move::prelude::Address {
+            pub fn id(&self) -> talus_sui_move::prelude::Address {
                 self.contents.id()
             }
 
@@ -987,7 +987,7 @@ fn struct_tag_builder_tokens(dt: &Datatype, use_aliases: bool) -> TokenStream {
     let sm = if use_aliases {
         quote! { sm }
     } else {
-        quote! { sui_move }
+        quote! { talus_sui_move }
     };
 
     let module = syn::LitStr::new(&dt.type_name.module, proc_macro2::Span::call_site());
@@ -1013,7 +1013,7 @@ fn enum_derives(abilities: &[Ability], rust_copy: bool, use_aliases: bool) -> To
     let sm = if use_aliases {
         quote! { sm }
     } else {
-        quote! { sui_move }
+        quote! { talus_sui_move }
     };
 
     let has_copy = abilities.contains(&Ability::Copy);
@@ -1043,14 +1043,14 @@ fn enum_derives(abilities: &[Ability], rust_copy: bool, use_aliases: bool) -> To
 }
 
 fn serde_crate_attr() -> TokenStream {
-    quote! { #[serde(crate = "sui_move::__private::serde")] }
+    quote! { #[serde(crate = "talus_sui_move::__private::serde")] }
 }
 
 fn type_param_bounds(dt: &Datatype, use_aliases: bool) -> Vec<TokenStream> {
     let sm = if use_aliases {
         quote! { sm }
     } else {
-        quote! { sui_move }
+        quote! { talus_sui_move }
     };
 
     dt.type_parameters
@@ -1135,7 +1135,7 @@ fn render_type_ref(
                 // Keep generation deterministic: unknown external types must be supplied by the
                 // consumer (e.g. another generated package crate).
                 let msg = format!(
-                    "sui-move-codegen: unknown external type `{}`; generate bindings for that package too",
+                    "talus-sui-move-codegen: unknown external type `{}`; generate bindings for that package too",
                     display_type_name(type_name)
                 );
                 let msg_lit = syn::LitStr::new(&msg, proc_macro2::Span::call_site());
@@ -1212,7 +1212,7 @@ fn render_type_ref_root(
                     return render_external_type(external, &args);
                 }
                 let msg = format!(
-                    "sui-move-codegen: unknown external type `{}`; generate bindings for that package too",
+                    "talus-sui-move-codegen: unknown external type `{}`; generate bindings for that package too",
                     display_type_name(type_name)
                 );
                 let msg_lit = syn::LitStr::new(&msg, proc_macro2::Span::call_site());
@@ -1245,7 +1245,7 @@ fn render_external_type(external: &ExternalType, args: &[TokenStream]) -> TokenS
         Ok(path) => quote! { #path },
         Err(_) => {
             let msg = format!(
-                "sui-move-codegen: invalid external Rust type path `{}`",
+                "talus-sui-move-codegen: invalid external Rust type path `{}`",
                 external.rust_path
             );
             let msg_lit = syn::LitStr::new(&msg, proc_macro2::Span::call_site());
@@ -1264,7 +1264,7 @@ fn prelude_type(use_aliases: bool, name: TokenStream) -> TokenStream {
     if use_aliases {
         quote! { sm::prelude::#name }
     } else {
-        quote! { sui_move::prelude::#name }
+        quote! { talus_sui_move::prelude::#name }
     }
 }
 

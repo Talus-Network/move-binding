@@ -43,7 +43,7 @@ pub struct TxOptions {
     /// Finality requested for the commit.
     ///
     /// When `Checkpointed` (default), `commit*` uses a gRPC method that also waits for checkpoint
-    /// inclusion ("read-your-writes" consistency on that node).
+    /// inclusion, so later reads from that node can observe the transaction.
     ///
     /// When `Executed`, `commit*` should only require execution (effects produced).
     pub finality: Finality,
@@ -129,7 +129,7 @@ pub enum EnsureSuccessError {
 impl Receipt {
     /// Return `Ok(())` if the transaction executed successfully.
     ///
-    /// Failed transactions are still committed on-chain and may update gas references.
+    /// Failed transactions are still committed on chain and may update gas references.
     pub fn ensure_success(&self) -> Result<(), EnsureSuccessError> {
         match &self.status {
             Some(ExecutionStatus::Success) => Ok(()),
@@ -139,7 +139,7 @@ impl Receipt {
     }
 }
 
-/// Options for running a transaction in dry-run mode (checks enabled).
+/// Options for running a transaction in simulation mode (checks enabled).
 #[derive(Clone, Debug)]
 pub struct SimulateOptions {
     /// Whether the server should perform gas selection automatically.
@@ -147,12 +147,12 @@ pub struct SimulateOptions {
     /// When `true` (default), the request can omit gas payment information and the server will
     /// pick a gas coin and budget for simulation.
     ///
-    /// Note: this option is ignored when checks are disabled (dev-inspect mode).
+    /// Note: this option is ignored when checks are disabled (inspect mode).
     ///
     /// If you set this to `false`, the simulation gRPC request may require an explicit gas payment on the
-    /// provided transaction. The current `sui-move-runtime` simulation helper does not model
+    /// provided transaction. The current `talus-sui-move-runtime` simulation helper does not model
     /// explicit gas payment configuration, so `false` is generally only useful if your gRPC server accepts
-    /// omitted gas payment without auto-selection.
+    /// omitted gas payment without automatic selection.
     pub do_gas_selection: bool,
 }
 
@@ -164,17 +164,17 @@ impl Default for SimulateOptions {
     }
 }
 
-/// Options for running a transaction in dev-inspect mode (checks disabled).
+/// Options for running a transaction in inspect mode (checks disabled).
 ///
 /// This is currently an empty placeholder for future knobs (e.g. requesting JSON renderings of
 /// outputs).
 #[derive(Clone, Debug, Default)]
 pub struct InspectOptions {}
 
-/// Receipt for a simulated transaction (dry-run).
+/// Receipt for a simulated transaction.
 ///
 /// Returned by [`crate::Tx::simulate`]. This does not mutate chain state and does not update
-/// runtime-owned handles.
+/// handles owned by the runtime.
 #[derive(Clone, Debug)]
 pub struct SimulationReceipt {
     /// Transaction digest, if returned by gRPC.
@@ -183,23 +183,23 @@ pub struct SimulationReceipt {
     pub effects: Option<TransactionEffects>,
 }
 
-/// Receipt for a dev-inspected transaction (checks disabled) including command outputs.
+/// Receipt for an inspected transaction, with checks disabled, including command outputs.
 ///
 /// Returned by [`crate::Tx::inspect`]. This does not mutate chain state and does not update
-/// runtime-owned handles.
+/// handles owned by the runtime.
 ///
-/// `outputs[i]` corresponds to the `i`-th PTB command.
+/// `outputs[i]` corresponds to the PTB command at index `i`.
 #[derive(Clone, Debug)]
 pub struct InspectReceipt {
     /// Transaction digest, if returned by gRPC.
     pub digest: Option<Digest>,
     /// Transaction effects, if returned by gRPC.
     pub effects: Option<TransactionEffects>,
-    /// Command outputs (return values + mutated-by-ref values), if requested.
+    /// Command outputs (return values and values mutated through references), if requested.
     pub outputs: Vec<CommandOutputs>,
 }
 
-/// Per-command outputs returned by dev-inspect.
+/// Outputs returned for each command during inspection.
 ///
 /// This struct is intentionally minimal: it only contains raw BCS blobs.
 #[derive(Clone, Debug, Default)]
@@ -210,13 +210,13 @@ pub struct CommandOutputs {
     pub mutated_by_ref: Vec<BcsValue>,
 }
 
-/// A raw BCS value returned by simulation/dev-inspect.
+/// A raw BCS value returned by simulation or inspection.
 ///
 /// You can decode this using `sui_sdk_types::bcs` (enabled via the `serde` feature on
 /// `sui-sdk-types`):
 ///
 /// ```
-/// use sui_move_runtime::BcsValue;
+/// use talus_sui_move_runtime::BcsValue;
 /// use sui_sdk_types::bcs::{FromBcs, ToBcs};
 ///
 /// let value = BcsValue {
@@ -266,7 +266,7 @@ pub enum TxError {
     },
 }
 
-/// Errors for simulate/dev-inspect operations.
+/// Errors from simulation or inspection.
 #[derive(thiserror::Error, Debug)]
 pub enum SimulateError {
     /// gRPC error.

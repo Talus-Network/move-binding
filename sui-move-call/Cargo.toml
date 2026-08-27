@@ -1,19 +1,24 @@
 [package]
-name = "sui-move-call"
-version = "0.1.0"
-edition = "2021"
+name = "talus-sui-move-call"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Typed call arguments and call specifications for Move calls on Sui."
 readme = "README.md"
+publish = ["crates-io"]
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/talus-sui-move-call"
+keywords = ["sui", "move", "blockchain", "transactions"]
+categories = ["api-bindings", "development-tools"]
 
 [dependencies]
-sui-move = { version = "0.1.0", path = "../sui-move" }
-serde = { workspace = true, features = ["derive"] }
+talus-sui-move = { workspace = true }
+serde = { workspace = true }
 bcs = { workspace = true }
 thiserror = { workspace = true }
 sui-sdk-types = { workspace = true }
 
 [dev-dependencies]
-sui-move = { path = "../sui-move", features = ["derive"] }
+talus-sui-move = { workspace = true, features = ["derive"] }

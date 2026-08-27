@@ -1,16 +1,18 @@
-# sui-move-ptb
+# talus-sui-move-ptb
 
-Programmable-transaction building blocks for typed Move calls on Sui.
+Programmable transaction building blocks for typed Move calls on Sui.
 
-This crate sits on top of [`sui-move-call`](../sui-move-call/README.md) and solves one problem:
+The crates.io package is `talus-sui-move-ptb`; Rust code imports it as `talus_sui_move_ptb`.
+
+This crate sits on top of [`talus-sui-move-call`](https://docs.rs/talus-sui-move-call) and solves one problem:
 **turn typed Move call descriptions into a `sui_sdk_types::ProgrammableTransaction`** while
 hiding input/argument indexing.
 
 ## Where it fits
 
-- `sui-move`: Move-shaped types (`MoveType`, `MoveStruct`, abilities)
-- `sui-move-call`: typed call descriptions (`CallSpec`, typed input wrappers)
-- `sui-move-ptb`: build PTBs from `CallSpec` (this crate)
+- `talus-sui-move`: Rust representations of Move types (`MoveType`, `MoveStruct`, abilities)
+- `talus-sui-move-call`: typed call descriptions (`CallSpec`, typed input wrappers)
+- `talus-sui-move-ptb`: build PTBs from `CallSpec` (this crate)
 
 ## The problem this crate solves
 
@@ -23,7 +25,7 @@ Commands do **not** embed inputs directly. Instead, they refer to them by index 
 `Argument::Input(u16)`. They can also refer to prior command results using `Argument::Result(u16)`
 and `Argument::NestedResult(u16, u16)`.
 
-`sui-move-call::CallSpec` already gives you a typed way to describe a Move call target and its
+`talus-sui-move-call::CallSpec` already gives you a typed way to describe a Move call target and its
 arguments, but it still contains the *inputs themselves* (`Vec<Input>`), not `Argument` indices.
 
 This crate is the tiny “allocation” layer that:
@@ -36,7 +38,7 @@ This crate is the tiny “allocation” layer that:
 ## Design principles
 
 - **Canonical wire types**: this crate uses `sui_sdk_types::{Input, Command, ProgrammableTransaction}`
-  (via `sui_move_call::CallArg`) instead of re-modeling them.
+  (via `talus_sui_move_call::CallArg`) instead of modeling them again.
 - **Minimal surface**: one builder type (`PtbBuilder`) plus a small set of command helpers.
 - **No runtime**: it only builds PTBs; signing/submission belongs in a higher layer.
 
@@ -61,22 +63,22 @@ meaningful).
 - `PtbBuilder`: accumulates inputs and commands, and can `call(CallSpec)` to add `Command::MoveCall`
 - `ptb`: convenience function that runs a closure with a fresh `PtbBuilder` and returns the
   finished `ProgrammableTransaction`
-- `ptb!`: macro wrapper around `ptb(...)` for concise call-site syntax
+- `ptb!`: macro wrapper around `ptb(...)` for concise call site syntax
 
 ## Example: build a PTB from `CallSpec`
 
 ```rust
 use std::str::FromStr;
-use sui_move_call::{CallSpec, MoveObject};
-use sui_move_ptb::ptb;
+use talus_sui_move_call::{CallSpec, MoveObject};
+use talus_sui_move_ptb::ptb;
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
     id: u64,
 }
 
-#[sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
+#[talus_sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
 struct Vault {
     id: UID,
 }
@@ -109,16 +111,16 @@ Using the same typed handle multiple times produces a single PTB input (reused b
 
 ```rust
 use std::str::FromStr;
-use sui_move_call::{CallSpec, MoveObject};
-use sui_move_ptb::ptb;
+use talus_sui_move_call::{CallSpec, MoveObject};
+use talus_sui_move_ptb::ptb;
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
     id: u64,
 }
 
-#[sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
+#[talus_sui_move::move_struct(address = "0x1", module = "vault", abilities = "key")]
 struct Vault {
     id: UID,
 }
@@ -141,7 +143,7 @@ let pt = ptb(|tx| {
 })
 .unwrap();
 
-// inputs: vault-object, 1u64, 2u64 (vault input is reused)
+// inputs: vault object, 1u64, 2u64 (vault input is reused)
 assert_eq!(pt.inputs.len(), 3);
 assert_eq!(pt.commands.len(), 2);
 ```
@@ -154,16 +156,16 @@ permissive mode and reuses the same input index.
 
 ```rust
 use std::str::FromStr;
-use sui_move_call::{CallArg, SharedMoveObject};
-use sui_move_ptb::PtbBuilder;
+use talus_sui_move_call::{CallArg, SharedMoveObject};
+use talus_sui_move_ptb::PtbBuilder;
 use sui_sdk_types::{Address, Argument, Mutability};
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
     id: u64,
 }
 
-#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+#[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Thing {
     id: UID,
 }
@@ -198,16 +200,16 @@ receiving). `PtbBuilder` detects this early.
 
 ```rust
 use std::str::FromStr;
-use sui_move_call::{CallArg, MoveObject, ReceivingMoveObject};
-use sui_move_ptb::{BuildError, PtbBuilder};
+use talus_sui_move_call::{CallArg, MoveObject, ReceivingMoveObject};
+use talus_sui_move_ptb::{BuildError, PtbBuilder};
 use sui_sdk_types::{Address, Digest, ObjectReference};
 
-#[sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
     id: u64,
 }
 
-#[sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
+#[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 struct Thing {
     id: UID,
 }
@@ -235,13 +237,13 @@ assert!(matches!(&tx2.inputs()[0], CallArg::Receiving(_)));
 
 ```rust
 use std::str::FromStr;
-use sui_move_call::CallSpec;
+use talus_sui_move_call::CallSpec;
 use sui_sdk_types::Address;
 
 let package = Address::from_str("0x1").unwrap();
 let spec = CallSpec::new(package, "m", "f").unwrap();
 
-let pt = sui_move_ptb::ptb! {
+let pt = talus_sui_move_ptb::ptb! {
     spec;
 }
 .unwrap();
@@ -249,7 +251,7 @@ let pt = sui_move_ptb::ptb! {
 assert_eq!(pt.commands.len(), 1);
 ```
 
-## Non-goals
+## Out of scope
 
 - No execution/runtime: this crate does not submit transactions.
 - No object fetching/decoding: it only wires inputs and commands.

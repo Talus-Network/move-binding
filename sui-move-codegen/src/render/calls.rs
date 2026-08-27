@@ -1,4 +1,4 @@
-//! Call-stub rendering (Move functions → call targets and optional `CallSpec` builders).
+//! Call stub rendering (Move functions → call targets and optional `CallSpec` builders).
 //!
 //! Design goals:
 //! - keep the generated API “honest”: it mirrors the Move signature shape (generic params, `&mut`)
@@ -39,7 +39,7 @@ fn render_function(
     let sm_call = if opts.use_aliases {
         quote! { sm_call }
     } else {
-        quote! { sui_move_call }
+        quote! { talus_sui_move_call }
     };
 
     let fn_ident = idents::ident(&f.name);
@@ -130,7 +130,7 @@ fn render_params_and_pushes(
     let sm_call = if opts.use_aliases {
         quote! { sm_call }
     } else {
-        quote! { sui_move_call }
+        quote! { talus_sui_move_call }
     };
 
     let mut params = Vec::new();
@@ -234,7 +234,7 @@ pub(super) fn type_param_bounds(
     let sm = if use_aliases {
         quote! { sm }
     } else {
-        quote! { sui_move }
+        quote! { talus_sui_move }
     };
 
     let required = required_type_param_abilities(f, pkg);

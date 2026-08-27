@@ -1,18 +1,23 @@
 [package]
-name = "sui-move-ptb"
-version = "0.1.0"
-edition = "2021"
-description = "Programmable-transaction builder for typed Move calls on Sui."
+name = "talus-sui-move-ptb"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Programmable transaction builder for typed Move calls on Sui."
 readme = "README.md"
+publish = ["crates-io"]
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/talus-sui-move-ptb"
+keywords = ["sui", "move", "blockchain", "transactions"]
+categories = ["api-bindings", "development-tools"]
 
 [dependencies]
-sui-move = { path = "../sui-move" }
-sui-move-call = { path = "../sui-move-call" }
+talus-sui-move = { workspace = true }
+talus-sui-move-call = { workspace = true }
 sui-sdk-types = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-sui-move = { path = "../sui-move", features = ["derive"] }
+talus-sui-move = { workspace = true, features = ["derive"] }

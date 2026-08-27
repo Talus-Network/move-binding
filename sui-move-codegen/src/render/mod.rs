@@ -6,10 +6,10 @@
 //! - render Rust source from the IR in CI/builds (offline).
 //!
 //! The generated code is designed to plug into the rest of the workspace:
-//! - generated types implement `sui-move` traits (`MoveType` / `MoveStruct`) and ability markers
+//! - generated types implement `talus-sui-move` traits (`MoveType` / `MoveStruct`) and ability markers
 //! - generated call targets identify Move functions for PTB builders
-//! - generated call-spec builders can return `sui-move-call::CallSpec`
-//! - optionally, a `TxExt` trait is emitted to add calls directly to `sui-move-runtime::Tx`
+//! - generated call specification builders can return `talus-sui-move-call::CallSpec`
+//! - optionally, a `TxExt` trait is emitted to add calls directly to `talus-sui-move-runtime::Tx`
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -38,30 +38,30 @@ pub struct RenderOptions {
     /// Set this to `false` for consumers that compose PTBs from generated targets and explicit
     /// `sui_sdk_types::Argument`s.
     pub emit_call_specs: bool,
-    /// Emit runtime helpers for `sui-move-runtime` (`TxExt`).
+    /// Emit runtime helpers for `talus-sui-move-runtime` (`TxExt`).
     ///
     /// When enabled, generated code includes a `TxExt` trait implemented for
-    /// `sui_move_runtime::Tx<'_, S>`. Each Move function becomes a convenience method like
+    /// `talus_sui_move_runtime::Tx<'_, S>`. Each Move function becomes a convenience method like
     /// `module__function(...)` that appends a `MoveCall` command by calling `Tx::call(...)`.
     ///
     /// This is optional so consumers can use the generated bindings without depending on the
     /// runtime layer.
     pub emit_tx_ext: bool,
-    /// Emit everything into a single flat module (no per-Move-module `mod` blocks).
+    /// Emit everything into a single flat module, with no `mod` block for each Move module.
     pub flatten: bool,
     /// If `true`, include small aliases to reduce verbosity in generated code.
     ///
     /// Concretely, this adds:
-    /// - `use sui_move as sm;`
-    /// - `use sui_move_call as sm_call;`
+    /// - `use talus_sui_move as sm;`
+    /// - `use talus_sui_move_call as sm_call;`
     pub use_aliases: bool,
-    /// If `true`, re-export generated datatypes from the package root.
+    /// If `true`, export generated datatypes from the package root.
     pub emit_reexports: bool,
     /// Rust paths for Move datatypes defined outside the package currently being rendered.
     ///
-    /// This is the explicit cross-package symbol table. The renderer still treats unknown external
+    /// This is the explicit external symbol table. The renderer still treats unknown external
     /// datatypes as compile errors, but entries in this map are rendered as generated Rust paths
-    /// instead of being folded into the `sui-move` core.
+    /// instead of being folded into the `talus-sui-move` core.
     pub external_types: BTreeMap<TypeName, ExternalType>,
 }
 
@@ -184,14 +184,14 @@ fn external_type_names(pkg: &NormalizedPackage, dt: &crate::ir::Datatype) -> Vec
     names
 }
 
-/// Rendered package split into package-root code and one generated module block per Move module.
+/// Rendered package split into package root code and one generated module block per Move module.
 ///
 /// This is useful for build scripts that need to choose their own `include!` layout without
 /// parsing rendered Rust source text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderedPackageParts {
-    /// Package-root code: package constants, package scoping helpers, optional `TxExt`, and
-    /// optional root re-exports.
+    /// Package root code: package constants, package scoping helpers, optional `TxExt`, and
+    /// optional root exports.
     pub root: String,
     /// `pub mod ... { ... }` blocks keyed by Move module name.
     pub modules: BTreeMap<String, String>,
@@ -204,8 +204,8 @@ pub struct RenderedPackageParts {
 /// # Example
 /// ```
 /// use std::collections::BTreeMap;
-/// use sui_move_codegen::ir::*;
-/// use sui_move_codegen::render::{render_package, RenderOptions};
+/// use talus_sui_move_codegen::ir::*;
+/// use talus_sui_move_codegen::render::{render_package, RenderOptions};
 ///
 /// let pkg = NormalizedPackage {
 ///     storage_id: "0x1".into(),
@@ -229,7 +229,7 @@ pub fn render_package(pkg: &NormalizedPackage, opts: &RenderOptions) -> String {
     util::prettify(tokens)
 }
 
-/// Render a normalized package into package-root source and per-module `pub mod ...` blocks.
+/// Render a normalized package into package root source and one `pub mod ...` block for each module.
 ///
 /// Unlike [`render_package_split`], this does not write files or assume `mod.rs` plus sibling
 /// module files. Callers decide how to include or store the returned strings.
@@ -254,7 +254,7 @@ pub fn render_package_parts(pkg: &NormalizedPackage, opts: &RenderOptions) -> Re
 ///
 /// This is convenient if you want the generated code to mirror the Move module structure on disk.
 /// The output directory will contain:
-/// - `mod.rs` (with package scope helpers, `pub mod ...;`, and `pub use ...;` re-exports)
+/// - `mod.rs` (with package scope helpers, `pub mod ...;`, and `pub use ...;` exports)
 /// - one `*.rs` file per Move module
 pub fn render_package_split(
     pkg: &NormalizedPackage,
@@ -727,8 +727,8 @@ mod tests {
         let code = render_package(&demo_pkg(), &RenderOptions::default());
 
         assert!(code.contains("thread_local!"));
-        assert!(code.contains("pub fn call_package() -> sui_move::prelude::Address"));
-        assert!(code.contains("pub fn type_package() -> sui_move::prelude::Address"));
+        assert!(code.contains("pub fn call_package() -> talus_sui_move::prelude::Address"));
+        assert!(code.contains("pub fn type_package() -> talus_sui_move::prelude::Address"));
         assert!(code.contains("pub fn with_packages<R>"));
         assert!(!code.contains("pub fn package()"));
         assert!(!code.contains("pub fn with_package<R>"));
@@ -742,8 +742,8 @@ mod tests {
 
         assert!(code.contains("pub const CALL_PACKAGE"));
         assert!(code.contains("pub const TYPE_PACKAGE"));
-        assert!(code.contains("pub fn call_package() -> sui_move::prelude::Address"));
-        assert!(code.contains("pub fn type_package() -> sui_move::prelude::Address"));
+        assert!(code.contains("pub fn call_package() -> talus_sui_move::prelude::Address"));
+        assert!(code.contains("pub fn type_package() -> talus_sui_move::prelude::Address"));
         assert!(code.contains("pub fn with_packages<R>"));
         assert!(code.contains("CallTarget::new(call_package(), \"m\", \"mutate\")"));
         assert!(code.contains("address_fn = \"__type_package_for_Obj\""));
@@ -876,17 +876,17 @@ mod tests {
     }
 
     #[test]
-    fn renders_structs_with_sui_move_move_struct_attribute() {
+    fn renders_structs_with_talus_sui_move_move_struct_attribute() {
         let opts = RenderOptions {
             use_aliases: false,
             ..RenderOptions::default()
         };
         let code = render_package(&demo_pkg(), &opts);
-        assert!(code.contains("#[sui_move::move_struct"));
+        assert!(code.contains("#[talus_sui_move::move_struct"));
     }
 
     #[test]
-    fn external_framework_types_are_not_mapped_to_sui_move_core() {
+    fn external_framework_types_are_not_mapped_to_talus_sui_move_core() {
         let code = render_package(&demo_pkg(), &RenderOptions::default());
         assert!(!code.contains("sm::types::UID"));
         assert!(code.contains("unknown external type `0x2::object::UID`"));
@@ -1024,7 +1024,7 @@ mod tests {
         let code = render_package(&demo_pkg(), &opts);
         assert!(code.contains("pub trait TxExt"));
         assert!(code.contains("fn m__mutate"));
-        assert!(code.contains("impl<'a, S> TxExt for sui_move_runtime::Tx<'a, S>"));
+        assert!(code.contains("impl<'a, S> TxExt for talus_sui_move_runtime::Tx<'a, S>"));
         assert!(code.contains("let spec = m::mutate"));
         assert!(code.contains("self.call(spec)"));
     }
@@ -1056,7 +1056,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("sui-move-codegen-{unique}"));
+        let dir = std::env::temp_dir().join(format!("talus-sui-move-codegen-{unique}"));
 
         render_package_split(&demo_pkg(), &opts, &dir).unwrap();
 

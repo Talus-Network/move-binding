@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
-use sui_move::{
+use sui_sdk_types::{StructTag, TypeTag};
+use talus_sui_move::{
     decode_keyed, parse_address, parse_identifier, HasKey, HasStore, MoveStruct, MoveType,
 };
-use sui_sdk_types::{StructTag, TypeTag};
 
-/// Example key-bearing type used to demonstrate tag-checked decoding.
+/// Example type with the Move `key` ability, used to demonstrate decoding that checks the tag.
 ///
 /// In real package bindings, framework and user types should be generated from package metadata.
-/// This example defines a small local type so the `sui-move` kernel remains self-contained.
+/// This example defines a small local type so the `talus-sui-move` kernel remains self contained.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Counter {
     value: u64,
@@ -41,5 +41,8 @@ fn main() {
     assert_eq!(inst.value.value, 10);
 
     let err = decode_keyed::<Counter>(TypeTag::U8, &bytes).unwrap_err();
-    assert!(matches!(err, sui_move::DecodeError::TypeTagMismatch { .. }));
+    assert!(matches!(
+        err,
+        talus_sui_move::DecodeError::TypeTagMismatch { .. }
+    ));
 }

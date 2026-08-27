@@ -6,12 +6,12 @@ use std::fmt;
 use std::str::FromStr;
 
 #[cfg(feature = "derive")]
-pub use sui_move_derive::{move_module, move_struct};
+pub use talus_sui_move_derive::{move_module, move_struct};
 
 pub mod prelude {
     //! Convenient imports for working with this crate.
     //!
-    //! Intended for end-user code and examples.
+    //! Intended for end user code and examples.
     #[cfg(feature = "derive")]
     pub use crate::{move_module, move_struct};
     pub use crate::{
@@ -84,12 +84,12 @@ impl<'de> Deserialize<'de> for U256 {
 /// A Rust type that corresponds to a Move type.
 ///
 /// Implementors provide a static [`TypeTag`](sui_sdk_types::TypeTag) (including any type
-/// arguments). This enables strongly-typed construction and verification of Move type tags and
+/// arguments). This enables strongly typed construction and verification of Move type tags and
 /// safe BCS decoding.
 ///
 /// # Example
 /// ```
-/// use sui_move::prelude::*;
+/// use talus_sui_move::prelude::*;
 ///
 /// assert_eq!(<u64 as MoveType>::type_tag_static(), TypeTag::U64);
 /// ```
@@ -177,7 +177,7 @@ pub enum DecodeError {
 ///
 /// # Example
 /// ```
-/// use sui_move::{MoveInstance, MoveType};
+/// use talus_sui_move::{MoveInstance, MoveType};
 ///
 /// let value = 7u64;
 /// let bytes = value.to_bcs().unwrap();
@@ -216,7 +216,7 @@ impl<T: MoveType + DeserializeOwned> MoveInstance<T> {
 ///
 /// # Example
 /// ```
-/// use sui_move::parse_identifier;
+/// use talus_sui_move::parse_identifier;
 ///
 /// assert_eq!(parse_identifier("coin").unwrap().to_string(), "coin");
 /// ```
@@ -230,7 +230,7 @@ pub fn parse_identifier(value: &str) -> Result<sui_sdk_types::Identifier, Decode
 /// # Example
 /// ```
 /// use std::str::FromStr;
-/// use sui_move::parse_address;
+/// use talus_sui_move::parse_address;
 /// use sui_sdk_types::Address;
 ///
 /// assert_eq!(
@@ -246,7 +246,7 @@ pub fn parse_address(value: &str) -> Result<sui_sdk_types::Address, DecodeError>
 ///
 /// # Example
 /// ```
-/// use sui_move::{type_tag_of, MoveType};
+/// use talus_sui_move::{type_tag_of, MoveType};
 ///
 /// assert_eq!(type_tag_of::<u64>(), <u64 as MoveType>::type_tag_static());
 /// ```

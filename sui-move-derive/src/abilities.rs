@@ -1,9 +1,9 @@
 //! Ability parsing and validation helpers.
 //!
 //! `#[move_struct]` can accept abilities in two places:
-//! - Struct-level abilities via `abilities = "..."` (these drive which marker traits are
-//!   implemented for the struct).
-//! - Type-parameter abilities via `type_abilities = "T: ..."` or via normal Rust bounds on the
+//! - Abilities declared on the struct via `abilities = "..."` (these drive which marker traits
+//!   are implemented for the struct).
+//! - Type parameter abilities via `type_abilities = "T: ..."` or via normal Rust bounds on the
 //!   type parameter (e.g. `T: HasStore + HasCopy`).
 //!
 //! This module contains the parsing and normalization logic (e.g. `copy` implies `drop`) plus
