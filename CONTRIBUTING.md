@@ -75,10 +75,6 @@ Prefer crates.io dependencies with explicit versions. Git dependencies are accep
 they are intentional and should also include a version requirement when the crate exists on
 crates.io, so the workspace can be packaged predictably.
 
-## Publishing
-
-Follow [RELEASING.md] for package validation, publication order, ownership, and trusted publishing.
-
 ## License
 
 By contributing, you agree that your contributions will be licensed under the same license as the
@@ -90,4 +86,3 @@ project: [LICENSE].
 [CLA]: https://gist.github.com/devops-talus/82cafc9752547baf4be140b6db1e8fd6
 [CLA Assistant]: https://cla-assistant.io/Talus-Network/move-binding
 [Conventional Commits]: https://www.conventionalcommits.org/
-[RELEASING.md]: RELEASING.md
