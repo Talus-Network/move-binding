@@ -105,9 +105,12 @@ struct TrackedObjectSnapshot {
 /// ```rust,no_run
 /// use talus_sui_move_runtime::prelude::*;
 ///
+/// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+/// # struct ID { bytes: Address }
+/// #
 /// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 /// # struct UID {
-/// #     id: u64,
+/// #     id: ID,
 /// # }
 /// # #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key, store")]
 /// # struct Demo {
@@ -395,9 +398,12 @@ impl<T: talus_sui_move::MoveStruct + talus_sui_move::HasKey> ToCallArgMut for Re
 /// use talus_sui_move_runtime::SharedObject;
 /// use sui_sdk_types::Address;
 ///
+/// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+/// # struct ID { bytes: Address }
+/// #
 /// # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 /// # struct UID {
-/// #     id: u64,
+/// #     id: ID,
 /// # }
 /// # #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key, store")]
 /// # struct Demo {

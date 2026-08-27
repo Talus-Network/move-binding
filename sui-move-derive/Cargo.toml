@@ -8,9 +8,8 @@ readme = "README.md"
 publish = ["crates-io"]
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 documentation = "https://docs.rs/talus-sui-move-derive"
-keywords = ["sui", "move", "blockchain", "proc-macro"]
+keywords = ["sui", "move", "blockchain", "proc-macro", "talus"]
 categories = ["development-tools::procedural-macro-helpers"]
 
 [lib]

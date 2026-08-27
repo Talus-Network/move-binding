@@ -5,7 +5,7 @@
 //! - commit that IR as JSON (optional),
 //! - render Rust source from the IR in CI/builds (offline).
 //!
-//! The generated code is designed to plug into the rest of the workspace:
+//! The generated code is designed to work with the other Talus Sui Move crates:
 //! - generated types implement `talus-sui-move` traits (`MoveType` / `MoveStruct`) and ability markers
 //! - generated call targets identify Move functions for PTB builders
 //! - generated call specification builders can return `talus-sui-move-call::CallSpec`

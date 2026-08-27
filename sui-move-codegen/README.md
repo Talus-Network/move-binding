@@ -2,10 +2,8 @@
 
 Generate typed Rust bindings for a Move package on Sui.
 
-The crates.io package is `talus-sui-move-codegen`; Rust code imports it as `talus_sui_move_codegen`.
-
 This crate solves one problem: **turn Move package metadata fetched from Sui into Rust source
-code** that fits the layered `talus-sui-move*` stack.
+code** compatible with the Talus Sui Move crates:
 
 - `talus-sui-move`: Rust representations of Move types (`MoveType`, `MoveStruct`, abilities)
 - `talus-sui-move-call`: `CallSpec` + typed argument traits (`ToCallArg`, `ObjectArg<T>`)
@@ -80,7 +78,8 @@ Given a `NormalizedPackage` (either fetched from gRPC or loaded from JSON), this
 - (optional) A `TxExt` trait implemented for `talus_sui_move_runtime::Tx` (enable with
   `RenderOptions::emit_tx_ext`)
 
-Those generated call builders are designed to be used directly in higher layers:
+Those generated call builders can be used directly with:
+
 - `talus-sui-move-ptb` can consume `CallSpec` to build a `ProgrammableTransaction`
 - `talus-sui-move-runtime` can consume `CallSpec` via its tx builder (or `talus_sui_move_runtime::tx!`)
 
@@ -525,9 +524,9 @@ expects these crates in the consumer’s `Cargo.toml`:
 
 ```toml
 [dependencies]
-talus-sui-move = "=0.2.0-rc.1"
-talus-sui-move-derive = "=0.2.0-rc.1"
-talus-sui-move-call = "=0.2.0-rc.1"
+talus-sui-move = "=0.2.0"
+talus-sui-move-derive = "=0.2.0"
+talus-sui-move-call = "=0.2.0"
 ```
 
 If you want to execute calls, add higher layers (`talus-sui-move-ptb`,

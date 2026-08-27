@@ -2,24 +2,22 @@
 
 Layered crates for writing typed, ergonomic Move interactions on Sui from Rust.
 
-This workspace is intentionally “deep”: each crate is a small abstraction that solves one problem,
-and higher layers build on lower ones.
+Each crate is a small abstraction that solves one problem, and the crates can be adopted
+individually.
 
 The primary mental model is **Read → Tx → Commit** with a **cursor** that advances your local
 frontier by applying transaction effects. See `MODEL.md`.
 
 ## Status
 
-The `0.2.0-rc.1` release candidate is the first release under crates.io package names owned by Talus.
-Public APIs may change before `1.0`; treat the crate boundaries and the `MODEL.md` invariants as
-more stable than individual function names.
+This is a pre-1.0 project. Public APIs may change before `1.0`; treat the crate boundaries and the
+`MODEL.md` invariants as more stable than individual function names.
 
-## Packages (low → high)
+## Crates
 
-The crates.io package names and Rust library names use the same Talus prefix. This gives consumers
-one consistent name in Cargo and source code.
+Cargo package names use hyphens, while Rust imports use underscores.
 
-| crates.io package | Rust crate | Role |
+| Cargo package | Rust import | Role |
 | --- | --- | --- |
 | `talus-sui-move` | `talus_sui_move` | Rust representations of Move types, abilities, and decoding helpers |
 | `talus-sui-move-derive` | `talus_sui_move_derive` | Derive macros for Rust structs that represent Move structs |
@@ -32,7 +30,7 @@ For example:
 
 ```toml
 [dependencies]
-talus-sui-move = { version = "=0.2.0-rc.1", features = ["derive"] }
+talus-sui-move = { version = "=0.2.0", features = ["derive"] }
 ```
 
 ```rust

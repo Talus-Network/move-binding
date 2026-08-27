@@ -2,9 +2,7 @@
 
 Runtime layer for typed Move interactions on Sui.
 
-The crates.io package is `talus-sui-move-runtime`; Rust code imports it as `talus_sui_move_runtime`.
-
-This crate sits at the top of this stack:
+It combines the other Talus Sui Move crates where needed:
 
 - [`talus-sui-move`](https://docs.rs/talus-sui-move): Rust representations of Move types
   (`MoveType`, `MoveStruct`, abilities)
@@ -40,8 +38,11 @@ use sui_sdk_types::{Address, PersonalMessage, Transaction, UserSignature};
 #     }
 # }
 #
+# #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+# struct ID { bytes: Address }
+#
 # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
-# struct UID { id: u64 }
+# struct UID { id: ID }
 #
 # #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 # struct Demo {
@@ -108,8 +109,11 @@ If you want a single action, use the `tx!` macro variants:
 use talus_sui_move_runtime::prelude::*;
 use sui_sdk_types::Address;
 
+# #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+# struct ID { bytes: Address }
+#
 # #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
-# struct UID { id: u64 }
+# struct UID { id: ID }
 #
 # #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
 # struct Demo { id: UID }
@@ -188,9 +192,14 @@ If you need a specific input mode, derive an explicit view at the moment it matt
 ```rust,no_run
 use talus_sui_move_runtime::prelude::*;
 
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+struct ID {
+    bytes: Address,
+}
+
 #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
-    id: u64,
+    id: ID,
 }
 
 #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
@@ -347,9 +356,14 @@ says X but BCS layout expects Y” becomes an explicit error instead of a silent
 use talus_sui_move_runtime::prelude::*;
 use sui_sdk_types::Address;
 
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+struct ID {
+    bytes: Address,
+}
+
 #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
-    id: u64,
+    id: ID,
 }
 
 #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]
@@ -423,9 +437,14 @@ threading `&mut ObjectReference` everywhere.
 ```rust,no_run
 use talus_sui_move_runtime::prelude::*;
 
+#[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+struct ID {
+    bytes: Address,
+}
+
 #[talus_sui_move::move_struct(address = "0x2", module = "object", abilities = "store")]
 struct UID {
-    id: u64,
+    id: ID,
 }
 
 #[talus_sui_move::move_struct(address = "0x1", module = "demo", abilities = "key")]

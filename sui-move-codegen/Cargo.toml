@@ -8,9 +8,8 @@ readme = "README.md"
 publish = ["crates-io"]
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 documentation = "https://docs.rs/talus-sui-move-codegen"
-keywords = ["sui", "move", "blockchain", "codegen"]
+keywords = ["sui", "move", "blockchain", "codegen", "talus"]
 categories = ["api-bindings", "development-tools"]
 
 [dependencies]

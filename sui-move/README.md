@@ -2,16 +2,14 @@
 
 Rust representations of Move types, built on top of `sui-sdk-types`.
 
-The crates.io package is `talus-sui-move`; Rust code imports it as `talus_sui_move`.
-
 This crate solves one problem: **represent Move types precisely in Rust** (including their
 `TypeTag`/`StructTag` and ability surface), so you can build strongly typed Sui clients and
 helpers that can **verify type tags and decode BCS safely**.
 
-## Where it fits
+## How to use it
 
-`talus-sui-move` is the bottom layer of this repository’s
-[stack](https://github.com/Talus-Network/move-binding/blob/main/MODEL.md). Higher layers use it to:
+`talus-sui-move` provides shared type traits used by the other Talus Sui Move crates. It can also
+be used independently to:
 
 - name types precisely when building Move calls (`TypeTag`/`StructTag`),
 - express Move ability constraints as normal Rust bounds,
@@ -77,11 +75,16 @@ represent Move structs.
 ```rust
 #[cfg(feature = "derive")]
 mod example {
-    use talus_sui_move::move_struct;
+    use talus_sui_move::{move_struct, prelude::Address};
+
+    #[move_struct(address = "0x2", module = "object", abilities = "copy, drop, store")]
+    pub struct ID {
+        pub bytes: Address,
+    }
 
     #[move_struct(address = "0x2", module = "object", abilities = "store")]
     pub struct UID {
-        pub id: u64,
+        pub id: ID,
     }
 
     #[move_struct(address = "0x1", module = "vault", abilities = "key, store")]
@@ -150,8 +153,7 @@ Those are datatypes defined by a package, not language atoms.
 
 If application code needs framework types, generate them from package metadata or define them in
 the consuming crate using the same `MoveType` / `MoveStruct` machinery used for user packages. This
-keeps the core crate small enough to serve as the trusted type kernel for generated bindings in
-higher layers.
+keeps this crate focused and lets generated bindings represent each package exactly.
 
 ### What is deliberately excluded
 
