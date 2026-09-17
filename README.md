@@ -30,7 +30,7 @@ For example:
 
 ```toml
 [dependencies]
-talus-sui-move = { version = "=0.2.0", features = ["derive"] }
+talus-sui-move = { version = "=0.3.0", features = ["derive"] }
 ```
 
 ```rust

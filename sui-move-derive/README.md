@@ -54,7 +54,7 @@ Most users should depend on `talus-sui-move` and enable its `derive` feature, wh
 
 ```toml
 [dependencies]
-talus-sui-move = { version = "=0.2.0", features = ["derive"] }
+talus-sui-move = { version = "=0.3.0", features = ["derive"] }
 ```
 
 Then use:

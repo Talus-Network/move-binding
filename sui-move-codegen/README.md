@@ -524,9 +524,9 @@ expects these crates in the consumer’s `Cargo.toml`:
 
 ```toml
 [dependencies]
-talus-sui-move = "=0.2.0"
-talus-sui-move-derive = "=0.2.0"
-talus-sui-move-call = "=0.2.0"
+talus-sui-move = "=0.3.0"
+talus-sui-move-derive = "=0.3.0"
+talus-sui-move-call = "=0.3.0"
 ```
 
 If you want to execute calls, add higher layers (`talus-sui-move-ptb`,
