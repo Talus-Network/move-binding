@@ -11,13 +11,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
-- Update Sui dependencies to 0.4.0 so Move bindings share transaction types that support protocol 137 validity rules.
-- This is a breaking release because Sui SDK types, RPC clients, and signer traits are exposed in the public API. Types from the previous 0.3 SDK dependency series are not interchangeable with the 0.4 series.
-
-### Migration
-
-- Update all directly used `talus-sui-move*` crates to 0.3.0 together.
-- Update direct `sui-sdk-types`, `sui-rpc`, and `sui-crypto` dependencies to the 0.4 series when they exchange types or traits with these crates.
+- **Breaking:** Update public Sui SDK dependencies to 0.4.0 for protocol 137 support.
 
 ## [0.2.0] - 2026-08-27
 

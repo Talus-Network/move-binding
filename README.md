@@ -33,6 +33,11 @@ For example:
 talus-sui-move = { version = "=0.3.0", features = ["derive"] }
 ```
 
+Use the same version for all `talus-sui-move*` crates in your application. Version `0.3`
+uses the `0.4` series of `sui-sdk-types`, `sui-rpc`, and `sui-crypto`. If your application
+passes their types or signers to these crates, update those direct dependencies to `0.4`
+as well.
+
 ```rust
 use talus_sui_move::MoveType;
 ```
