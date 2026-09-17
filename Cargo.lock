@@ -970,7 +970,7 @@ checksum = "0bf256ce5efdfa370213c1dabab5935a12e49f2c58d15e9eac2870d3b4f27263"
 
 [[package]]
 name = "talus-sui-move"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bcs",
  "ethnum",
@@ -982,7 +982,7 @@ dependencies = [
 
 [[package]]
 name = "talus-sui-move-call"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bcs",
  "serde",
@@ -993,7 +993,7 @@ dependencies = [
 
 [[package]]
 name = "talus-sui-move-codegen"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -1008,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "talus-sui-move-derive"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1018,7 +1018,7 @@ dependencies = [
 
 [[package]]
 name = "talus-sui-move-ptb"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "sui-sdk-types",
  "talus-sui-move",
@@ -1028,7 +1028,7 @@ dependencies = [
 
 [[package]]
 name = "talus-sui-move-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",

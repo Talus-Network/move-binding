@@ -7,9 +7,11 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-17
+
 ### Changed
 
-- Update Sui dependencies to 0.4.0 so Move bindings share transaction types that support protocol 137 validity rules.
+- **Breaking:** Update public Sui SDK dependencies to 0.4.0 for protocol 137 support.
 
 ## [0.2.0] - 2026-08-27
 
@@ -44,6 +46,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
-[Unreleased]: https://github.com/Talus-Network/move-binding/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Talus-Network/move-binding/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Talus-Network/move-binding/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Talus-Network/move-binding/compare/v0.2.0-rc.1...v0.2.0
 [0.2.0-rc.1]: https://github.com/Talus-Network/move-binding/compare/v0.1.0...v0.2.0-rc.1

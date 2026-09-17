@@ -10,19 +10,19 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.90"
 license = "Apache-2.0"
 repository = "https://github.com/Talus-Network/move-binding"
 
 [workspace.dependencies]
-talus-sui-move = { version = "=0.2.0", path = "sui-move" }
-talus-sui-move-derive = { version = "=0.2.0", path = "sui-move-derive" }
-talus-sui-move-call = { version = "=0.2.0", path = "sui-move-call" }
-talus-sui-move-ptb = { version = "=0.2.0", path = "sui-move-ptb" }
-talus-sui-move-runtime = { version = "=0.2.0", path = "sui-move-runtime" }
-talus-sui-move-codegen = { version = "=0.2.0", path = "sui-move-codegen" }
+talus-sui-move = { version = "=0.3.0", path = "sui-move" }
+talus-sui-move-derive = { version = "=0.3.0", path = "sui-move-derive" }
+talus-sui-move-call = { version = "=0.3.0", path = "sui-move-call" }
+talus-sui-move-ptb = { version = "=0.3.0", path = "sui-move-ptb" }
+talus-sui-move-runtime = { version = "=0.3.0", path = "sui-move-runtime" }
+talus-sui-move-codegen = { version = "=0.3.0", path = "sui-move-codegen" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
