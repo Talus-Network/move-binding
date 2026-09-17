@@ -884,9 +884,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sui-crypto"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7b8f54c4405002c9ece67cb848479f80837185a55a59d8c0a105240f737d0da"
+checksum = "9c71cc9ba615bd3960106553d1c6affda579a8587ae0b36ffa199ce94f607fc9"
 dependencies = [
  "base64ct",
  "signature",
@@ -895,9 +895,9 @@ dependencies = [
 
 [[package]]
 name = "sui-rpc"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "617504d5c6b748af0494b73db80fb893840522329788c48c826d8298e7edb0aa"
+checksum = "eed3e2bef1c8236610fb0f32489d689c2c8ba7087917d5f2b8b842cb2a4b73ce"
 dependencies = [
  "base64",
  "bcs",
@@ -920,9 +920,9 @@ dependencies = [
 
 [[package]]
 name = "sui-sdk-types"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a22266119e43d3da1a8bc9945c8b569a513e7682f561265d70ef8b6e198dd664"
+checksum = "24c4cf4b8ba51ccb8c8f77405e6b50025ccfe174e06e09b0a542ccbc3f224af5"
 dependencies = [
  "base64ct",
  "bcs",
